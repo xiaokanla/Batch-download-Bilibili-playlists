@@ -15,6 +15,7 @@
             <h1>BiliDownloader</h1>
             <p>收藏夹下载工作台</p>
           </div>
+          <button id="helpBtn" class="icon-btn" title="打开使用指南" aria-label="打开使用指南">?</button>
         </div>
 
         <section class="panel account">
@@ -97,7 +98,7 @@
           </div>
           <div class="guide-actions">
             <button id="guidePrimaryBtn" class="btn primary">去登录</button>
-            <button id="guideHelpBtn" class="btn ghost">查看环境诊断</button>
+            <button id="guideHelpBtn" class="btn ghost">打开使用指南</button>
           </div>
         </section>
 
@@ -184,12 +185,12 @@
           <div class="section-note">先下载视频，再打开 Eagle，最后把视频和封面套图一起导入。</div>
           <input id="eagleLibrary" class="input" placeholder="Eagle .library 目录" />
           <button id="chooseEagleBtn" class="btn ghost full">选择 Eagle 库</button>
-          <button id="refreshEagleIndexBtn" class="btn ghost full">刷新 Eagle 库索引</button>
           <select id="eagleFolder" class="select eagle-folder-select">
             <option value="">导入到 Eagle 默认位置</option>
           </select>
           <details class="advanced-tools eagle-options">
             <summary>高级选项（不懂可以保持默认）</summary>
+            <button id="refreshEagleIndexBtn" class="btn ghost full">刷新 Eagle 库索引</button>
             <label class="toggle"><input id="deleteAfterEagle" type="checkbox" checked /> 导入成功后删除本地视频</label>
             <label class="toggle"><input id="useDanmakuEagle" type="checkbox" checked /> 根据弹幕峰值优化抽帧</label>
             <select id="eagleSpeedMode" class="select eagle-folder-select">

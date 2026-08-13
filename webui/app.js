@@ -575,6 +575,175 @@ function closeModal() {
   }
 }
 
+function openHelpGuide() {
+  showModal(`
+    <div class="help-doc">
+      <div class="help-hero">
+        <div>
+          <div class="eyebrow">使用指南</div>
+          <h2>BiliDownloader Studio 怎么用</h2>
+          <p class="muted">这份指南覆盖下载、Eagle 导入、封面套图、历史记录、特殊链接、路径设置和常见问题。使用时可以随时点左上角 ? 打开。</p>
+        </div>
+        <button id="helpRunDiag" class="btn primary">先运行环境诊断</button>
+      </div>
+
+      <section>
+        <h3>最快上手流程</h3>
+        <ol>
+          <li>点击左侧“扫码登录”，用 B站 App 扫码。</li>
+          <li>在左侧选择收藏夹，点击“同步收藏夹”。</li>
+          <li>在中间列表勾选要下载的视频，也可以点“全选当前列表”。</li>
+          <li>右侧选择下载目录，点击“启动下载”。</li>
+          <li>如果要整理到 Eagle，先打开 Eagle，选择 .library 库和目标文件夹，再点“导入已下载视频到 Eagle”。</li>
+        </ol>
+      </section>
+
+      <section>
+        <h3>首次使用要不要扫描 Eagle 库？</h3>
+        <p>不需要。只用下载功能时完全不用设置 Eagle。下载后导入 Eagle 时，也只需要选择 Eagle 的 .library 目录和目标文件夹。</p>
+        <p>“刷新 Eagle 库索引”不是首次必做项。只有在你要处理 Eagle 里已经存在的视频、批量修复旧封面、或者 Eagle 文件夹变化很多时，才需要刷新索引。</p>
+      </section>
+
+      <section>
+        <h3>账号与环境诊断</h3>
+        <ul>
+          <li>扫码登录：用于读取你的收藏夹和下载需要登录权限的视频。</li>
+          <li>环境诊断：检查 FFmpeg、FFprobe、Aria2、下载目录、Eagle API、Eagle 库路径和写入权限。</li>
+          <li>FFmpeg / FFprobe：用于合并高清视频音频、抽帧生成封面。如果路径为空，程序会优先使用内置或系统路径。</li>
+          <li>Aria2：可选加速下载器。不稳定时可以留空，程序会回退到内置下载方式。</li>
+        </ul>
+      </section>
+
+      <section>
+        <h3>同步收藏夹</h3>
+        <ul>
+          <li>登录后，左侧会显示你的收藏夹。</li>
+          <li>选择一个收藏夹后点击“同步收藏夹”。同步只读取列表，不会自动下载。</li>
+          <li>列表会显示标题、BV 号、封面、时长、收藏时间和是否已下载。</li>
+          <li>同步速度会保持保守，不做激进并发，避免触发 B站风控。</li>
+        </ul>
+      </section>
+
+      <section>
+        <h3>筛选和选择视频</h3>
+        <ul>
+          <li>搜索框：按标题或 BV 号查找。</li>
+          <li>时长筛选：按视频长度快速筛选。</li>
+          <li>仅看未下载：只显示历史记录里还没下载过的视频。</li>
+          <li>月份分布：点击柱状图月份，可以按收藏时间筛选。</li>
+          <li>全选当前列表：只选择当前筛选条件下显示的视频。</li>
+          <li>标记已下载 / 未下载：用于修正历史记录，不会删除本地视频。</li>
+          <li>删除已选：只从当前列表移除，不等同于删除 B站收藏夹里的视频。</li>
+        </ul>
+      </section>
+
+      <section>
+        <h3>下载视频</h3>
+        <ol>
+          <li>先在中间列表勾选视频。</li>
+          <li>右侧选择下载目录。</li>
+          <li>选择清晰度。普通用户建议保持 1080。</li>
+          <li>限速可以留空。担心网络或风控时，可以填写较保守的 KB/s 数值。</li>
+          <li>点击“启动下载”。下载完成后会自动写入历史记录。</li>
+        </ol>
+        <p>“仅下载音频”适合只保存声音。“下载所有分 P”适合合集视频或多 P 视频。</p>
+      </section>
+
+      <section>
+        <h3>特殊链接和外部来源</h3>
+        <ul>
+          <li>导入外部收藏夹：可以填收藏夹链接或 media_id。</li>
+          <li>导入视频合集：可以填合集内任意视频链接或 BV 号。</li>
+          <li>提取视频 / 特殊链接：适合普通视频链接、BV/av、短链、拜年祭或活动页。</li>
+          <li>这些功能在左侧“更多数据来源与记录工具”里，不是新手必用。</li>
+        </ul>
+      </section>
+
+      <section>
+        <h3>历史记录与换电脑</h3>
+        <ul>
+          <li>下载完成后，程序会记录 BV 号、标题、路径、封面等信息。</li>
+          <li>换电脑前，在旧电脑点“导出历史记录”。</li>
+          <li>新电脑点“导入历史记录”，再同步收藏夹，旧视频会显示为已下载。</li>
+          <li>这样可以避免重复下载以前保存过的视频。</li>
+        </ul>
+      </section>
+
+      <section>
+        <h3>Eagle 导入视频</h3>
+        <ol>
+          <li>先下载视频，并确认本地文件还存在。</li>
+          <li>打开 Eagle。</li>
+          <li>点击“选择 Eagle 库”，选择以 .library 结尾的 Eagle 库目录。</li>
+          <li>选择导入目标文件夹。如果不选，会导入到 Eagle 默认位置。</li>
+          <li>点击“导入已下载视频到 Eagle”。</li>
+        </ol>
+        <p>导入时会生成封面套图：上方尽量使用 B站原封面，下方从视频中抽取静帧。开启弹幕峰值时，会优先选择弹幕高峰附近的画面。</p>
+      </section>
+
+      <section>
+        <h3>Eagle 高级选项</h3>
+        <ul>
+          <li>导入成功后删除本地视频：节省硬盘空间。担心误删时可以先关闭。</li>
+          <li>根据弹幕峰值优化抽帧：有弹幕缓存时封面质量通常更好。</li>
+          <li>速度模式：快速更省时，平衡推荐，高质量更慢但候选帧更多。</li>
+          <li>强制重新生成已有封面：默认不要打开，除非你想重做所有封面。</li>
+          <li>刷新 Eagle 库索引：只在修复 Eagle 里已有视频、库变化很大、或者匹配异常时使用。</li>
+        </ul>
+      </section>
+
+      <section>
+        <h3>修复 Eagle 文件夹封面</h3>
+        <ul>
+          <li>用于处理已经在 Eagle 库里的视频，不是普通导入流程必需。</li>
+          <li>先选择 Eagle 库和目标文件夹，再点“修复选中文件夹封面”。</li>
+          <li>默认跳过已经有自定义封面的视频。</li>
+          <li>匹配不到 BV 时，会直接从本地视频抽帧生成套图，不会继续请求 B站封面和弹幕。</li>
+        </ul>
+      </section>
+
+      <section>
+        <h3>路径设置</h3>
+        <ul>
+          <li>程序数据目录：保存登录状态、下载历史、收藏夹缓存和设置。修改后需要重启。</li>
+          <li>默认下载目录：视频保存位置。</li>
+          <li>FFmpeg / FFprobe / Aria2：留空会使用内置或系统工具。</li>
+          <li>Eagle 导出/缓存目录：保存封面套图、弹幕缓存等中间文件。</li>
+          <li>错误日志文件：保存失败原因，排查问题时有用。</li>
+        </ul>
+      </section>
+
+      <section>
+        <h3>常见问题</h3>
+        <dl>
+          <dt>双击 exe 后没打开页面</dt>
+          <dd>首次启动可能需要 10-20 秒。也可以手动访问 http://127.0.0.1:8765。</dd>
+          <dt>看不到最新 UI</dt>
+          <dd>关闭旧的 BiliDownloaderStudio.exe 后重新打开，或访问 http://127.0.0.1:8765/?v=2。</dd>
+          <dt>下载后没有声音</dt>
+          <dd>通常是 FFmpeg 合并失败。先运行环境诊断，确认 FFmpeg 和 FFprobe 可用。</dd>
+          <dt>部分电脑 aria2 下载失败</dt>
+          <dd>可以留空 Aria2 路径，程序会回退到内置下载方式。</dd>
+          <dt>Eagle 导入失败</dt>
+          <dd>确认 Eagle 已打开、选中的是 .library 目录、目标文件夹存在、本地视频文件没有被移动。</dd>
+          <dt>Eagle 缩略图没有马上变化</dt>
+          <dd>Eagle 可能缓存缩略图。切换文件夹、刷新 Eagle 或重启 Eagle 后再看。</dd>
+          <dt>同步或搜索变慢</dt>
+          <dd>程序会刻意控制请求频率，避免被 B站识别成异常爬取。不要短时间反复大批量同步。</dd>
+        </dl>
+      </section>
+    </div>
+  `);
+  const diagBtn = $("helpRunDiag");
+  if (diagBtn) {
+    diagBtn.onclick = () => {
+      closeModal();
+      scrollIntoPanel("runDiagnosticsBtn");
+      runDiagnostics();
+    };
+  }
+}
+
 async function promptAction(title, placeholder, action) {
   showModal(`
     <h2>${escapeHtml(title)}</h2>
@@ -652,9 +821,9 @@ function bindSettingsEvents() {
   if ($("runDiagnosticsBtn")) $("runDiagnosticsBtn").onclick = runDiagnostics;
   if ($("guidePrimaryBtn")) $("guidePrimaryBtn").onclick = clickGuideTarget;
   if ($("guideHelpBtn")) $("guideHelpBtn").onclick = () => {
-    scrollIntoPanel("runDiagnosticsBtn");
-    runDiagnostics();
+    openHelpGuide();
   };
+  if ($("helpBtn")) $("helpBtn").onclick = openHelpGuide;
 }
 
 function bindEvents() {
