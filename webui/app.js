@@ -96,8 +96,74 @@ function renderState() {
   renderDownload();
   renderEagle();
   renderDiagnostics();
+  renderGuide();
   renderSettings();
   renderLogs();
+}
+
+function guideStatus() {
+  const loggedIn = Boolean(app.state?.user?.loggedIn);
+  const hasFolders = Boolean((app.state?.favFolders || []).length || Object.keys(app.state?.favData || {}).length);
+  const hasVideos = Boolean((app.state?.favVideos || []).length || (app.state?.manualVideos || []).length);
+  const hasSelected = app.selected.size > 0;
+  const hasDownloadDir = Boolean(($("saveDir")?.value || app.state?.settings?.downloadDir || "").trim());
+  const hasDownloadedLocalVideos = Object.values(app.state?.downloadRecords || {}).some((record) => record.path);
+  const eagleLibrary = Boolean(($("eagleLibrary")?.value || app.state?.eagle?.libraryDir || "").trim());
+  if (!loggedIn) {
+    return {
+      step: 1,
+      title: "先扫码登录 B站",
+      description: "登录后才能读取你的收藏夹。点击左侧“扫码登录”，用 B站 App 扫码即可。",
+      action: "扫码登录",
+      target: "loginBtn",
+      help: "没有账号也可以先用“提取视频/特殊链接”添加单个视频。",
+    };
+  }
+  if (!hasFolders || !hasVideos) {
+    return {
+      step: 2,
+      title: "选择收藏夹，然后同步列表",
+      description: hasFolders ? "已经读取到收藏夹，选择一个收藏夹后点击“同步收藏夹”。" : "如果左侧没有收藏夹，请先确认登录状态，再点击同步或导入外部收藏夹。",
+      action: "同步收藏夹",
+      target: "syncBtn",
+      help: "同步只会读取列表，不会开始下载。",
+    };
+  }
+  if (!hasSelected || !hasDownloadDir) {
+    return {
+      step: 3,
+      title: hasSelected ? "选择下载目录，然后开始下载" : "勾选要下载的视频",
+      description: hasSelected ? "右侧选择保存目录后，点击“启动下载”。" : "在中间列表点击视频卡片或复选框，至少选择一个视频。",
+      action: hasSelected ? (hasDownloadDir ? "启动下载" : "选择下载目录") : "全选当前筛选",
+      target: hasSelected ? (hasDownloadDir ? "startBtn" : "chooseDirBtn") : "selectAllBtn",
+      help: "下载完成后，程序会自动记录 BV 号，避免以后重复下载。",
+    };
+  }
+  return {
+    step: 4,
+    title: hasDownloadedLocalVideos ? "可选：导入 Eagle 并生成封面" : "下载完成后可以导入 Eagle",
+    description: hasDownloadedLocalVideos
+      ? (eagleLibrary ? "Eagle 库已设置，可以点击“导入已下载视频到 Eagle”。" : "打开 Eagle 后，先选择 .library 库目录，再导入。")
+      : "先完成下载。下载完成后，这里会引导你把视频导入 Eagle。",
+    action: hasDownloadedLocalVideos ? (eagleLibrary ? "导入 Eagle" : "选择 Eagle 库") : "查看下载状态",
+    target: hasDownloadedLocalVideos ? (eagleLibrary ? "eagleImportBtn" : "chooseEagleBtn") : "startBtn",
+    help: "不使用 Eagle 的话，到下载完成这一步就可以结束。",
+  };
+}
+
+function renderGuide() {
+  const guide = guideStatus();
+  if (!$("guideTitle")) return;
+  $("guideTitle").textContent = guide.title;
+  $("guideDescription").textContent = guide.description;
+  $("guidePrimaryBtn").textContent = guide.action;
+  $("guideHelpBtn").textContent = guide.help || "查看环境诊断";
+  $("syncHint").textContent = guide.step <= 2 ? guide.help : "列表同步后，在中间选择要下载的视频。";
+  document.querySelectorAll(".guide-step").forEach((item) => {
+    const step = Number(item.dataset.guideStep || 0);
+    item.classList.toggle("active", step === guide.step);
+    item.classList.toggle("done", step < guide.step);
+  });
 }
 
 function renderFavSelect() {
@@ -528,6 +594,22 @@ async function promptAction(title, placeholder, action) {
   };
 }
 
+function scrollIntoPanel(id) {
+  const el = $(id);
+  if (!el) return;
+  el.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+  el.classList.add("attention");
+  setTimeout(() => el.classList.remove("attention"), 900);
+}
+
+function clickGuideTarget() {
+  const guide = guideStatus();
+  const target = $(guide.target);
+  if (!target) return;
+  scrollIntoPanel(guide.target);
+  setTimeout(() => target.click(), 180);
+}
+
 async function pickDirTo(id) {
   const result = await api("/api/choose-dir", { method: "POST", body: {} });
   if (result.path && $(id)) $(id).value = result.path;
@@ -568,6 +650,11 @@ function bindSettingsEvents() {
   $("pickErrorLogPath").onclick = () => pickFileTo("settingErrorLogPath");
   $("saveSettingsBtn").onclick = () => saveSettings(true).catch((error) => toast(error.message));
   if ($("runDiagnosticsBtn")) $("runDiagnosticsBtn").onclick = runDiagnostics;
+  if ($("guidePrimaryBtn")) $("guidePrimaryBtn").onclick = clickGuideTarget;
+  if ($("guideHelpBtn")) $("guideHelpBtn").onclick = () => {
+    scrollIntoPanel("runDiagnosticsBtn");
+    runDiagnostics();
+  };
 }
 
 function bindEvents() {
@@ -727,6 +814,16 @@ function bindEvents() {
   };
   $("startBtn").onclick = async () => {
     try {
+      if (!app.selected.size) {
+        toast("请先在中间列表勾选要下载的视频");
+        scrollIntoPanel("videoList");
+        return;
+      }
+      if (!$("saveDir").value.trim()) {
+        toast("请先选择下载目录");
+        scrollIntoPanel("chooseDirBtn");
+        return;
+      }
       await api("/api/download/start", {
         method: "POST",
         body: {
@@ -745,6 +842,11 @@ function bindEvents() {
   };
   $("eagleImportBtn").onclick = async () => {
     try {
+      if (!$("eagleLibrary").value.trim()) {
+        toast("请先选择 Eagle 的 .library 库目录");
+        scrollIntoPanel("chooseEagleBtn");
+        return;
+      }
       const result = await api("/api/eagle/import", {
         method: "POST",
         body: {

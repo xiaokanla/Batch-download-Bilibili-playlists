@@ -18,9 +18,10 @@
         </div>
 
         <section class="panel account">
-          <div class="eyebrow">账号</div>
+          <div class="eyebrow">第 1 步 · 登录账号</div>
           <div id="userName" class="account-name">未登录</div>
           <div id="envLine" class="muted">检测组件中...</div>
+          <div class="helper-text">登录后才能读取你的收藏夹。只在本机保存登录状态。</div>
           <div class="row gap">
             <button id="loginBtn" class="btn primary">扫码登录</button>
             <button id="logoutBtn" class="btn ghost">退出</button>
@@ -28,7 +29,7 @@
         </section>
 
         <section class="panel">
-          <div class="eyebrow">数据源</div>
+          <div class="eyebrow">第 2 步 · 选择收藏夹</div>
           <div id="favDropdown" class="dropdown">
             <button id="favDropdownBtn" class="dropdown-btn" type="button">
               <span id="favDropdownLabel">请选择收藏夹</span>
@@ -38,13 +39,17 @@
           </div>
           <div class="progress slim"><span id="syncProgress"></span></div>
           <button id="syncBtn" class="btn primary full">同步收藏夹</button>
-          <button id="importFavBtn" class="btn ghost full">导入外部收藏夹</button>
-          <button id="seasonBtn" class="btn ghost full">导入视频合集</button>
-          <button id="extractBtn" class="btn ghost full">提取视频/特殊链接</button>
-          <div class="action-row">
-            <button id="importHistoryBtn" class="btn ghost">导入记录</button>
-            <button id="exportHistoryBtn" class="btn ghost">导出记录</button>
-          </div>
+          <div id="syncHint" class="helper-text">先选择收藏夹，再点击同步。</div>
+          <details class="advanced-tools">
+            <summary>更多数据来源与记录工具</summary>
+            <button id="importFavBtn" class="btn ghost full">导入外部收藏夹</button>
+            <button id="seasonBtn" class="btn ghost full">导入视频合集</button>
+            <button id="extractBtn" class="btn ghost full">提取视频 / 特殊链接</button>
+            <div class="action-row">
+              <button id="importHistoryBtn" class="btn ghost">导入历史记录</button>
+              <button id="exportHistoryBtn" class="btn ghost">导出历史记录</button>
+            </div>
+          </details>
         </section>
 
         <section class="panel">
@@ -66,7 +71,8 @@
         <header class="top glass">
           <div>
             <div class="eyebrow">本地 Web UI</div>
-            <h2>收藏夹下载与 Eagle 封面管理</h2>
+            <h2>收藏夹下载工作台</h2>
+            <p class="top-subtitle">按页面上的步骤操作，不需要了解技术细节。</p>
           </div>
           <div class="search">
             <input id="searchInput" placeholder="搜索标题 / BV 号" />
@@ -77,6 +83,24 @@
           </div>
         </header>
 
+        <section class="guide card" id="beginnerGuide">
+          <div class="guide-main">
+            <div class="eyebrow">新手引导</div>
+            <h3 id="guideTitle">先登录 B站，再同步你的收藏夹</h3>
+            <p id="guideDescription" class="muted">完成当前步骤后，页面会自动告诉你下一步做什么。</p>
+          </div>
+          <div class="guide-steps">
+            <button class="guide-step active" data-guide-step="1"><span>1</span><b>登录</b></button>
+            <button class="guide-step" data-guide-step="2"><span>2</span><b>同步</b></button>
+            <button class="guide-step" data-guide-step="3"><span>3</span><b>下载</b></button>
+            <button class="guide-step" data-guide-step="4"><span>4</span><b>Eagle</b></button>
+          </div>
+          <div class="guide-actions">
+            <button id="guidePrimaryBtn" class="btn primary">去登录</button>
+            <button id="guideHelpBtn" class="btn ghost">查看环境诊断</button>
+          </div>
+        </section>
+
         <section class="metrics">
           <div class="metric card"><span>当前列表</span><strong id="metricTotal">0</strong></div>
           <div class="metric card"><span>已下载</span><strong id="metricDone">0</strong></div>
@@ -85,10 +109,10 @@
         </section>
 
         <section class="toolbar card">
-          <button id="selectAllBtn" class="btn ghost">全选</button>
+          <button id="selectAllBtn" class="btn ghost">全选当前列表</button>
           <button id="clearSelectBtn" class="btn ghost">取消选择</button>
-          <button id="markDoneBtn" class="btn ghost">标为已下</button>
-          <button id="markUndoneBtn" class="btn ghost">标为未下</button>
+          <button id="markDoneBtn" class="btn ghost">标记已下载</button>
+          <button id="markUndoneBtn" class="btn ghost">标记未下载</button>
           <button id="deleteBtn" class="btn danger">删除已选</button>
           <div class="pager">
             <button id="prevPage" class="btn ghost">‹</button>
@@ -126,7 +150,8 @@
         </section>
 
         <section class="panel download-panel">
-          <div class="eyebrow">下载</div>
+          <div class="eyebrow">第 3 步 · 下载选中的视频</div>
+          <div class="section-note">在中间列表勾选视频后，回到这里选择保存位置并开始下载。</div>
           <input id="saveDir" class="input" placeholder="保存目录" />
           <button id="chooseDirBtn" class="btn ghost full">选择下载目录</button>
           <div class="grid2">
@@ -155,21 +180,25 @@
         </section>
 
         <section class="panel eagle-box">
-          <div class="eyebrow">Eagle</div>
+          <div class="eyebrow">第 4 步 · 导入 Eagle（可选）</div>
+          <div class="section-note">先下载视频，再打开 Eagle，最后把视频和封面套图一起导入。</div>
           <input id="eagleLibrary" class="input" placeholder="Eagle .library 目录" />
           <button id="chooseEagleBtn" class="btn ghost full">选择 Eagle 库</button>
-          <button id="refreshEagleIndexBtn" class="btn ghost full">刷新 Eagle 索引</button>
+          <button id="refreshEagleIndexBtn" class="btn ghost full">刷新 Eagle 库索引</button>
           <select id="eagleFolder" class="select eagle-folder-select">
             <option value="">导入到 Eagle 默认位置</option>
           </select>
-          <label class="toggle"><input id="deleteAfterEagle" type="checkbox" checked /> 导入后删除源视频</label>
-          <label class="toggle"><input id="useDanmakuEagle" type="checkbox" checked /> 使用弹幕峰值抽帧</label>
-          <select id="eagleSpeedMode" class="select eagle-folder-select">
-            <option value="快速">快速</option>
-            <option value="平衡" selected>平衡</option>
-            <option value="高质量">高质量</option>
-          </select>
-          <label class="toggle"><input id="forceEagleRebuild" type="checkbox" /> 强制刷新已生成封面</label>
+          <details class="advanced-tools eagle-options">
+            <summary>高级选项（不懂可以保持默认）</summary>
+            <label class="toggle"><input id="deleteAfterEagle" type="checkbox" checked /> 导入成功后删除本地视频</label>
+            <label class="toggle"><input id="useDanmakuEagle" type="checkbox" checked /> 根据弹幕峰值优化抽帧</label>
+            <select id="eagleSpeedMode" class="select eagle-folder-select">
+              <option value="快速">快速</option>
+              <option value="平衡" selected>平衡</option>
+              <option value="高质量">高质量</option>
+            </select>
+            <label class="toggle"><input id="forceEagleRebuild" type="checkbox" /> 强制重新生成已有封面</label>
+          </details>
           <button id="eagleImportBtn" class="btn primary full">导入已下载视频到 Eagle</button>
           <button id="eagleFolderThumbBtn" class="btn ghost full">修复选中文件夹封面</button>
           <div class="action-row">
@@ -193,24 +222,26 @@
           </div>
         </section>
 
-        <section class="panel settings-panel">
-          <div class="eyebrow">路径设置</div>
-          <label class="field-label">程序数据目录（改动后重启生效）</label>
-          <div class="path-row"><input id="settingDataDir" class="input" /><button id="pickDataDir" class="btn ghost">选择</button></div>
-          <label class="field-label">默认下载目录</label>
-          <div class="path-row"><input id="settingDownloadDir" class="input" placeholder="未设置时每次下载前选择" /><button id="pickDownloadDir" class="btn ghost">选择</button></div>
-          <label class="field-label">FFmpeg</label>
-          <div class="path-row"><input id="settingFfmpegPath" class="input" placeholder="留空使用内置或系统 FFmpeg" /><button id="pickFfmpegPath" class="btn ghost">选择</button></div>
-          <label class="field-label">FFprobe</label>
-          <div class="path-row"><input id="settingFfprobePath" class="input" placeholder="留空使用内置或系统 FFprobe" /><button id="pickFfprobePath" class="btn ghost">选择</button></div>
-          <label class="field-label">Aria2</label>
-          <div class="path-row"><input id="settingAria2Path" class="input" placeholder="留空自动使用内置或回退下载器" /><button id="pickAria2Path" class="btn ghost">选择</button></div>
-          <label class="field-label">Eagle 导出/缓存目录</label>
-          <div class="path-row"><input id="settingEagleExportDir" class="input" /><button id="pickEagleExportDir" class="btn ghost">选择</button></div>
-          <label class="field-label">错误日志文件</label>
-          <div class="path-row"><input id="settingErrorLogPath" class="input" /><button id="pickErrorLogPath" class="btn ghost">选择</button></div>
-          <button id="saveSettingsBtn" class="btn primary full">保存路径设置</button>
-        </section>
+        <details class="panel settings-panel advanced-tools">
+          <summary>高级设置与路径</summary>
+          <div class="settings-body">
+            <div class="field-label">程序数据目录（改动后重启生效）</div>
+            <div class="path-row"><input id="settingDataDir" class="input" /><button id="pickDataDir" class="btn ghost">选择</button></div>
+            <div class="field-label">默认下载目录</div>
+            <div class="path-row"><input id="settingDownloadDir" class="input" placeholder="未设置时每次下载前选择" /><button id="pickDownloadDir" class="btn ghost">选择</button></div>
+            <div class="field-label">FFmpeg</div>
+            <div class="path-row"><input id="settingFfmpegPath" class="input" placeholder="留空使用内置或系统 FFmpeg" /><button id="pickFfmpegPath" class="btn ghost">选择</button></div>
+            <div class="field-label">FFprobe</div>
+            <div class="path-row"><input id="settingFfprobePath" class="input" placeholder="留空使用内置或系统 FFprobe" /><button id="pickFfprobePath" class="btn ghost">选择</button></div>
+            <div class="field-label">Aria2</div>
+            <div class="path-row"><input id="settingAria2Path" class="input" placeholder="留空自动使用内置或回退下载器" /><button id="pickAria2Path" class="btn ghost">选择</button></div>
+            <div class="field-label">Eagle 导出/缓存目录</div>
+            <div class="path-row"><input id="settingEagleExportDir" class="input" /><button id="pickEagleExportDir" class="btn ghost">选择</button></div>
+            <div class="field-label">错误日志文件</div>
+            <div class="path-row"><input id="settingErrorLogPath" class="input" /><button id="pickErrorLogPath" class="btn ghost">选择</button></div>
+            <button id="saveSettingsBtn" class="btn primary full">保存路径设置</button>
+          </div>
+        </details>
 
         <section class="panel logs">
           <div class="eyebrow">运行日志</div>
