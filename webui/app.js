@@ -584,7 +584,10 @@ function openHelpGuide() {
           <h2>BiliDownloader Studio 怎么用</h2>
           <p class="muted">这份指南覆盖下载、Eagle 导入、封面套图、历史记录、特殊链接、路径设置和常见问题。使用时可以随时点左上角 ? 打开。</p>
         </div>
-        <button id="helpRunDiag" class="btn primary">先运行环境诊断</button>
+        <div class="guide-actions">
+          <button id="helpRunDiag" class="btn primary">先运行环境诊断</button>
+          <button id="helpResetState" class="btn danger">恢复初始状态</button>
+        </div>
       </div>
 
       <section>
@@ -670,6 +673,17 @@ function openHelpGuide() {
       </section>
 
       <section>
+        <h3>测试版专用：恢复初始状态</h3>
+        <ul>
+          <li>会清空本软件的下载记录、收藏夹缓存、登录态、Eagle 索引、搜索缓存和路径设置。</li>
+          <li>重置后会回到“刚安装、还没配置”的状态。</li>
+          <li>这个功能不删除你的 B站收藏夹，也不删除 Eagle 库本身。</li>
+          <li>执行前建议先停止正在运行的下载或 Eagle 任务。</li>
+        </ul>
+        <p>如果你只是想换账号，直接点“退出”就够了，不必重置。</p>
+      </section>
+
+      <section>
         <h3>Eagle 导入视频</h3>
         <ol>
           <li>先下载视频，并确认本地文件还存在。</li>
@@ -742,6 +756,35 @@ function openHelpGuide() {
       runDiagnostics();
     };
   }
+  const resetBtn = $("helpResetState");
+  if (resetBtn) {
+    resetBtn.onclick = openResetConfirm;
+  }
+}
+
+function openResetConfirm() {
+  showModal(`
+    <h2>恢复初始状态</h2>
+    <p class="muted">这会清空本软件的下载记录、登录态、收藏夹缓存、Eagle 索引和设置，恢复到刚安装时的样子。</p>
+    <p class="muted">请输入 <strong>RESET</strong> 继续。</p>
+    <input id="modalInput" class="input" placeholder="输入 RESET" autofocus />
+    <button id="modalOk" class="btn danger full">确认重置</button>
+  `);
+  $("modalOk").onclick = async () => {
+    const value = $("modalInput").value.trim();
+    if (value !== "RESET") {
+      toast("请输入 RESET 才能确认重置");
+      return;
+    }
+    try {
+      const result = await api("/api/reset", { method: "POST", body: {} });
+      closeModal();
+      toast(result.message || "已恢复初始状态");
+      setTimeout(() => location.reload(), 700);
+    } catch (error) {
+      toast(error.message);
+    }
+  };
 }
 
 async function promptAction(title, placeholder, action) {
@@ -818,6 +861,7 @@ function bindSettingsEvents() {
   $("pickEagleExportDir").onclick = () => pickDirTo("settingEagleExportDir");
   $("pickErrorLogPath").onclick = () => pickFileTo("settingErrorLogPath");
   $("saveSettingsBtn").onclick = () => saveSettings(true).catch((error) => toast(error.message));
+  $("resetStateBtn").onclick = openResetConfirm;
   if ($("runDiagnosticsBtn")) $("runDiagnosticsBtn").onclick = runDiagnostics;
   if ($("guidePrimaryBtn")) $("guidePrimaryBtn").onclick = clickGuideTarget;
   if ($("guideHelpBtn")) $("guideHelpBtn").onclick = () => {

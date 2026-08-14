@@ -126,6 +126,114 @@ class WebBiliApp:
         self.env = self.check_env_tools()
         self.auto_login()
 
+    def _reset_sidecar_files(self):
+        targets = [
+            os.path.join(APP_DIR, "last_login_cookie.json"),
+            os.path.join(APP_DIR, "bili_netscape_temp.txt"),
+            os.path.join(APP_DIR, "error_log.txt"),
+        ]
+        for path in targets:
+            try:
+                if os.path.isfile(path):
+                    os.remove(path)
+            except Exception:
+                pass
+
+    def _remove_path(self, path):
+        if not path:
+            return
+        try:
+            if os.path.isdir(path):
+                shutil.rmtree(path, ignore_errors=True)
+            elif os.path.isfile(path):
+                os.remove(path)
+        except Exception:
+            pass
+
+    def _reset_data_tree(self, data_dir):
+        if not data_dir:
+            return
+        data_dir = os.path.abspath(data_dir)
+        try:
+            if os.path.isdir(data_dir):
+                shutil.rmtree(data_dir, ignore_errors=True)
+            elif os.path.isfile(data_dir):
+                os.remove(data_dir)
+        except Exception:
+            pass
+
+    def reset_to_fresh_install(self):
+        global USERDATA_DIR, CACHE_DIR, DOWNLOAD_RECORDS_PATH, EAGLE_CONFIG_PATH, EAGLE_INDEX_PATH, BILI_SEARCH_CACHE_PATH, APP_SETTINGS_PATH
+        with self.lock:
+            if self.sync_running or self.download.get("running") or self.eagle_task.get("running"):
+                raise RuntimeError("请先停止正在运行的同步、下载或 Eagle 任务")
+            current_data_dir = os.path.abspath(self.settings.get("dataDir") or USERDATA_DIR)
+        self._reset_data_tree(current_data_dir)
+        self._reset_sidecar_files()
+        self._remove_path(BOOTSTRAP_SETTINGS_PATH)
+        USERDATA_DIR = DEFAULT_USERDATA_DIR
+        CACHE_DIR = os.path.join(USERDATA_DIR, "_web_cache")
+        DOWNLOAD_RECORDS_PATH = os.path.join(USERDATA_DIR, "download_records.json")
+        EAGLE_CONFIG_PATH = os.path.join(USERDATA_DIR, "eagle_config.json")
+        EAGLE_INDEX_PATH = os.path.join(USERDATA_DIR, "eagle_item_index.json")
+        BILI_SEARCH_CACHE_PATH = os.path.join(USERDATA_DIR, "bili_title_search_cache.json")
+        APP_SETTINGS_PATH = os.path.join(USERDATA_DIR, "app_settings.json")
+        manager_module.BASE_DIR = USERDATA_DIR
+        manager_module.NETSCAPE_TEMP = os.path.join(APP_DIR, "bili_netscape_temp.txt")
+        manager_module.LAST_LOGIN_COOKIE = os.path.join(APP_DIR, "last_login_cookie.json")
+        with self.lock:
+            self.settings = {
+                "dataDir": USERDATA_DIR,
+                "downloadDir": "",
+                "ffmpegPath": "",
+                "ffprobePath": "",
+                "aria2Path": "",
+                "eagleExportDir": os.path.join(APP_DIR, "eagle_exports"),
+                "errorLogPath": os.path.join(APP_DIR, "error_log.txt"),
+            }
+            self.download_records = {}
+            self.bili_search_cache = {}
+            self.eagle = {
+                "libraryDir": "",
+                "folderId": "",
+                "speedMode": "\u5e73\u8861",
+                "deleteAfterImport": True,
+                "useDanmaku": True,
+            }
+            self.eagle_index = {"library": "", "count": 0, "generatedAt": ""}
+            self.download = {"running": False, "total": 0, "file": 0, "title": "等待任务", "status": "Ready"}
+            self.fav_data = {}
+            self.fav_folders = []
+            self.fav_videos = []
+            self.manual_videos = []
+            self.logs = []
+            self.sync_progress = 0
+            self.sync_running = False
+            self.user = {"loggedIn": False, "name": "未登录", "mid": "guest"}
+            self.eagle_task = {
+                "running": False,
+                "total": 0,
+                "done": 0,
+                "percent": 0,
+                "current": "",
+                "status": "Idle",
+                "stats": {"success": 0, "skipped": 0, "failed": 0},
+                "errors": [],
+                "paused": False,
+                "cancelled": False,
+                "type": "",
+            }
+            self.save_json_file(APP_SETTINGS_PATH, self.settings)
+            self._remove_path(BOOTSTRAP_SETTINGS_PATH)
+            self.apply_runtime_paths()
+            self.env = self.check_env_tools()
+            try:
+                self.mgr.logout()
+            except Exception:
+                pass
+            self.mgr.init_paths()
+        return {"ok": True, "message": "已恢复到初始状态。请刷新页面并重新登录。"}
+
     def load_json_file(self, path, default):
         if not os.path.exists(path):
             return default
@@ -1749,6 +1857,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(APP.set_app_settings(payload))
             if path == "/api/diagnostics":
                 return self.send_json(APP.run_diagnostics())
+            if path == "/api/reset":
+                return self.send_json(APP.reset_to_fresh_install())
             if path == "/api/eagle/config":
                 return self.send_json(APP.set_eagle_config(payload))
             if path == "/api/eagle/folders":
