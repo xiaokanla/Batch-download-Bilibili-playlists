@@ -30,6 +30,12 @@ async function api(path, options = {}) {
     headers: { "Content-Type": "application/json" },
     body: options.body ? JSON.stringify(options.body) : undefined,
   });
+  const contentType = res.headers.get("Content-Type") || "";
+  if (!contentType.includes("application/json")) {
+    const text = await res.text();
+    const preview = text.trim().slice(0, 80);
+    throw new Error(`后端接口返回异常，可能是打开了旧版本服务或接口不存在：${path}${preview ? `（${preview}...）` : ""}`);
+  }
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || "请求失败");
   return data;
@@ -381,6 +387,7 @@ function setInputValue(id, value) {
 
 function renderSettings() {
   const settings = app.state.settings || {};
+  const isTestBuild = app.state.build?.flavor === "test";
   setInputValue("saveDir", $("saveDir")?.value || settings.downloadDir || "");
   setInputValue("settingDataDir", settings.dataDir || "");
   setInputValue("settingDownloadDir", settings.downloadDir || "");
@@ -389,6 +396,7 @@ function renderSettings() {
   setInputValue("settingAria2Path", settings.aria2Path || "");
   setInputValue("settingEagleExportDir", settings.eagleExportDir || "");
   setInputValue("settingErrorLogPath", settings.errorLogPath || "");
+  if ($("resetStateBtn")) $("resetStateBtn").classList.toggle("hidden", !isTestBuild);
 }
 
 function renderEagle() {
@@ -758,7 +766,9 @@ function openHelpGuide() {
   }
   const resetBtn = $("helpResetState");
   if (resetBtn) {
-    resetBtn.onclick = openResetConfirm;
+    const isTestBuild = app.state?.build?.flavor === "test";
+    resetBtn.classList.toggle("hidden", !isTestBuild);
+    resetBtn.onclick = isTestBuild ? openResetConfirm : null;
   }
 }
 

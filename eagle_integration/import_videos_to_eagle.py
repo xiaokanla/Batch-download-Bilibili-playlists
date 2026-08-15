@@ -62,6 +62,17 @@ DANMAKU_CACHE_DIR = EXPORT_DIR / "danmaku_cache"
 VIDEO_EXTS = {".mp4", ".mkv", ".webm", ".flv", ".mov", ".m4v"}
 
 
+def subprocess_no_window_kwargs() -> dict:
+    if os.name != "nt":
+        return {}
+    startupinfo = subprocess.STARTUPINFO()
+    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    return {
+        "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        "startupinfo": startupinfo,
+    }
+
+
 def find_ffmpeg() -> str:
     configured = os.environ.get("BILI_FFMPEG_PATH", "")
     if configured and Path(configured).exists():
@@ -256,7 +267,14 @@ def match_eagle_library_items(
 
 
 def run_command(args: list[str]) -> subprocess.CompletedProcess:
-    return subprocess.run(args, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    return subprocess.run(
+        args,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        **subprocess_no_window_kwargs(),
+    )
 
 
 def run_ffmpeg(args: list[str]) -> None:

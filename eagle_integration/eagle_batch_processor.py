@@ -11,9 +11,6 @@ import re
 import threading
 import time
 from pathlib import Path
-from tkinter import BOTH, END, HORIZONTAL, LEFT, RIGHT, X, BooleanVar, IntVar, StringVar, Tk, filedialog, messagebox
-from tkinter import ttk
-from tkinter.scrolledtext import ScrolledText
 
 import requests
 
@@ -27,6 +24,17 @@ ROOT = Path(__file__).resolve().parent
 PROJECT_ROOT = ROOT.parent
 RECORDS_PATH = PROJECT_ROOT / "userdata" / "download_records.json"
 INDEX_PATH = PROJECT_ROOT / "userdata" / "eagle_item_index.json"
+
+
+def ensure_tkinter_loaded() -> None:
+    """Load tkinter only for the standalone GUI, not for Web UI background imports."""
+    if os.environ.get("BILI_WEB_HEADLESS") == "1":
+        raise RuntimeError("GUI dialogs are disabled during Web UI Eagle tasks")
+    global BOTH, END, HORIZONTAL, LEFT, RIGHT, X
+    global BooleanVar, IntVar, StringVar, Tk, filedialog, messagebox, ttk, ScrolledText
+    from tkinter import BOTH, END, HORIZONTAL, LEFT, RIGHT, X, BooleanVar, IntVar, StringVar, Tk, filedialog, messagebox
+    from tkinter import ttk
+    from tkinter.scrolledtext import ScrolledText
 
 
 SPEED_MODES = {
@@ -266,6 +274,7 @@ def process_record(
 
 class EagleBatchProcessor:
     def __init__(self, root: Tk):
+        ensure_tkinter_loaded()
         self.root = root
         self.root.title("BiliDownloader Eagle 批处理器")
         self.root.geometry("1180x780")
@@ -496,6 +505,7 @@ class EagleBatchProcessor:
 
 
 def main() -> None:
+    ensure_tkinter_loaded()
     root = Tk()
     style = ttk.Style(root)
     try:

@@ -33,6 +33,8 @@ APP_DIR = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else 
 WEB_DIR = os.path.join(RESOURCE_DIR, "webui")
 DEFAULT_USERDATA_DIR = os.path.join(APP_DIR, "userdata")
 BOOTSTRAP_SETTINGS_PATH = os.path.join(DEFAULT_USERDATA_DIR, "app_settings.json")
+APP_VERSION = "1.2.6-nopopup"
+APP_FLAVOR = "release"
 
 
 def bootstrap_userdata_dir():
@@ -498,6 +500,7 @@ class WebBiliApp:
                 "logs": self.logs[-160:],
                 "sync": {"running": self.sync_running, "progress": self.sync_progress},
                 "download": self.download,
+                "build": {"version": APP_VERSION, "flavor": APP_FLAVOR},
             }
 
     def set_app_settings(self, payload):
@@ -1540,6 +1543,8 @@ class WebBiliApp:
             item_index = self._build_eagle_item_record_index(known_records)
 
         def _task():
+            previous_headless = os.environ.get("BILI_WEB_HEADLESS")
+            os.environ["BILI_WEB_HEADLESS"] = "1"
             total = len(items)
             self._eagle_set_task(
                 running=True,
@@ -1596,6 +1601,11 @@ class WebBiliApp:
             except Exception as exc:
                 self._eagle_task_error(exc)
                 self._eagle_set_task(running=False, current="", status="Error", paused=False)
+            finally:
+                if previous_headless is None:
+                    os.environ.pop("BILI_WEB_HEADLESS", None)
+                else:
+                    os.environ["BILI_WEB_HEADLESS"] = previous_headless
 
         threading.Thread(target=_task, daemon=True).start()
         return {"started": True, "total": len(items)}
@@ -1631,6 +1641,8 @@ class WebBiliApp:
             raise RuntimeError("没有可导入的视频：需要已下载、源文件仍存在、且尚未导入 Eagle")
 
         def _task():
+            previous_headless = os.environ.get("BILI_WEB_HEADLESS")
+            os.environ["BILI_WEB_HEADLESS"] = "1"
             total = len(records)
             self._eagle_set_task(running=True, total=total, done=0, percent=0, current="", status="Preparing", stats={"success": 0, "skipped": 0, "failed": 0}, errors=[], paused=False, cancelled=False, type="import")
             try:
@@ -1668,6 +1680,11 @@ class WebBiliApp:
             except Exception as exc:
                 self._eagle_task_error(exc)
                 self._eagle_set_task(running=False, current="", status="Error", paused=False)
+            finally:
+                if previous_headless is None:
+                    os.environ.pop("BILI_WEB_HEADLESS", None)
+                else:
+                    os.environ["BILI_WEB_HEADLESS"] = previous_headless
 
         threading.Thread(target=_task, daemon=True).start()
         return {"started": True, "total": len(records)}
@@ -1811,6 +1828,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_file(os.path.join(WEB_DIR, "app.js"), "application/javascript; charset=utf-8")
             if path == "/api/state":
                 return self.send_json(APP.public_state())
+            if path == "/api/app-info":
+                return self.send_json({"name": "BiliDownloader Studio", "version": APP_VERSION, "flavor": APP_FLAVOR})
             if path == "/api/image":
                 url = parse_qs(parsed.query).get("url", [""])[0]
                 return self.send_image_proxy(url)
@@ -1858,6 +1877,8 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/diagnostics":
                 return self.send_json(APP.run_diagnostics())
             if path == "/api/reset":
+                if APP_FLAVOR != "test":
+                    return self.send_json({"error": "恢复初始状态只在测试版开放"}, 403)
                 return self.send_json(APP.reset_to_fresh_install())
             if path == "/api/eagle/config":
                 return self.send_json(APP.set_eagle_config(payload))
@@ -1892,10 +1913,19 @@ def main():
     for candidate in range(8765, 8796):
         url = f"http://{host}:{candidate}"
         try:
+            resp = requests.get(f"{url}/api/app-info", timeout=0.6)
+            if resp.ok and resp.headers.get("Content-Type", "").startswith("application/json"):
+                data = resp.json()
+                if data.get("version") == APP_VERSION:
+                    webbrowser.open(url)
+                    return
+        except Exception:
+            pass
+        try:
             resp = requests.get(f"{url}/api/state", timeout=0.6)
-            if resp.ok:
-                webbrowser.open(url)
-                return
+            if resp.ok and resp.headers.get("Content-Type", "").startswith("application/json"):
+                print(f"Found a different BiliDownloader service at {url}; starting this build on another port.")
+                continue
         except Exception:
             pass
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:

@@ -11,6 +11,18 @@ from yt_dlp.utils import DownloadError
 from config import ERROR_LOG
 from utils import BiliResolver
 
+
+def subprocess_no_window_kwargs():
+    if os.name != "nt":
+        return {}
+    startupinfo = subprocess.STARTUPINFO()
+    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    return {
+        "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        "startupinfo": startupinfo,
+    }
+
+
 class DownloadWorker:
     def __init__(self, items, save_dir, speed_limit, quality, progress_cb, history_cb, fail_cb, session, cookie_gen, log_cb, is_audio_only, dl_all_parts=False):
         self.items = items
@@ -149,7 +161,8 @@ class DownloadWorker:
                  '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', file_path],
                 capture_output=True,
                 text=True,
-                timeout=30
+                timeout=30,
+                **subprocess_no_window_kwargs(),
             )
             return 'audio' in result.stdout.lower()
         except:
@@ -481,7 +494,8 @@ class DownloadWorker:
                                             check=True,
                                             capture_output=True,
                                             text=True,
-                                            timeout=120
+                                            timeout=120,
+                                            **subprocess_no_window_kwargs(),
                                         )
                                         merge_success = True
                                         self.log_cb("✅ 合并完成 (流复制)")
@@ -497,7 +511,8 @@ class DownloadWorker:
                                                 check=True,
                                                 capture_output=True,
                                                 text=True,
-                                                timeout=180
+                                                timeout=180,
+                                                **subprocess_no_window_kwargs(),
                                             )
                                             merge_success = True
                                             self.log_cb("✅ 合并完成 (音频转码)")
@@ -522,7 +537,8 @@ class DownloadWorker:
                                                     check=True,
                                                     capture_output=True,
                                                     text=True,
-                                                    timeout=300
+                                                    timeout=300,
+                                                    **subprocess_no_window_kwargs(),
                                                 )
                                                 if self._verify_audio_stream(f_path):
                                                     success = True
