@@ -228,6 +228,13 @@ function positionFavDropdownMenu() {
   menu.style.maxHeight = `${Math.min(320, maxHeight)}px`;
 }
 
+function portalFavDropdownMenu() {
+  const menu = $("favDropdownMenu");
+  if (menu && menu.parentElement !== document.body) {
+    document.body.appendChild(menu);
+  }
+}
+
 function closeFavDropdown() {
   $("favDropdown").classList.remove("open");
   const menu = $("favDropdownMenu");
@@ -240,6 +247,7 @@ function toggleFavDropdown() {
   const menu = $("favDropdownMenu");
   const open = menu.classList.contains("hidden");
   root.classList.toggle("open", open);
+  if (open) portalFavDropdownMenu();
   menu.classList.toggle("hidden", !open);
   if (open) requestAnimationFrame(positionFavDropdownMenu);
 }
