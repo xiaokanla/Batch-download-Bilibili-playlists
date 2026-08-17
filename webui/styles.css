@@ -275,7 +275,7 @@ h3 {
 
 .dropdown-menu {
   position: fixed;
-  z-index: 1000;
+  z-index: 2147483000;
   max-height: 320px;
   overflow: auto;
   padding: 8px;
@@ -287,6 +287,11 @@ h3 {
   transform: translateY(0) scale(1) translateZ(0);
   transform-origin: top;
   animation: dropdownIn 160ms ease both;
+}
+
+.dropdown-menu.dropdown-portal {
+  position: fixed;
+  isolation: isolate;
 }
 
 .dropdown-menu.hidden {

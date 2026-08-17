@@ -225,12 +225,13 @@ function positionFavDropdownMenu() {
   menu.style.left = `${Math.round(rect.left)}px`;
   menu.style.top = `${Math.round(top)}px`;
   menu.style.width = `${Math.round(rect.width)}px`;
-  menu.style.maxHeight = `${Math.min(320, maxHeight)}px`;
+  menu.style.maxHeight = `${Math.min(420, maxHeight)}px`;
 }
 
 function portalFavDropdownMenu() {
   const menu = $("favDropdownMenu");
   if (menu && menu.parentElement !== document.body) {
+    menu.classList.add("dropdown-portal");
     document.body.appendChild(menu);
   }
 }
@@ -914,7 +915,9 @@ function bindEvents() {
   };
   $("favDropdownMenu").onclick = (event) => event.stopPropagation();
   document.addEventListener("click", (event) => {
-    if (!$("favDropdown").contains(event.target)) closeFavDropdown();
+    const root = $("favDropdown");
+    const menu = $("favDropdownMenu");
+    if (!root.contains(event.target) && !menu.contains(event.target)) closeFavDropdown();
   });
   window.addEventListener("resize", positionFavDropdownMenu);
   document.querySelector(".rail")?.addEventListener("scroll", positionFavDropdownMenu, { passive: true });
