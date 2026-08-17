@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>BiliDownloader Studio</title>
-    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/styles.css?v=20260817-dropdown" />
   </head>
   <body>
     <div class="shell">
@@ -36,7 +36,6 @@
               <span id="favDropdownLabel">请选择收藏夹</span>
               <span class="chevron">⌄</span>
             </button>
-            <div id="favDropdownMenu" class="dropdown-menu hidden"></div>
           </div>
           <div class="progress slim"><span id="syncProgress"></span></div>
           <button id="syncBtn" class="btn primary full">同步收藏夹</button>
@@ -259,6 +258,7 @@
       </div>
     </div>
 
-    <script src="/app.js"></script>
+    <div id="favDropdownMenu" class="dropdown-menu dropdown-portal hidden"></div>
+    <script src="/app.js?v=20260817-dropdown"></script>
   </body>
 </html>
