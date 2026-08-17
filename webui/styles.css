@@ -146,6 +146,11 @@ h3 {
 .panel {
   margin-bottom: 14px;
   padding: 14px;
+  position: relative;
+}
+
+.fav-source-panel {
+  z-index: 40;
 }
 
 .account-name {
@@ -225,6 +230,11 @@ h3 {
 .dropdown {
   position: relative;
   margin-bottom: 10px;
+  z-index: 1;
+}
+
+.dropdown.open {
+  z-index: 120;
 }
 
 .dropdown-btn {
@@ -265,7 +275,7 @@ h3 {
 
 .dropdown-menu {
   position: absolute;
-  z-index: 30;
+  z-index: 140;
   top: calc(100% + 8px);
   left: 0;
   right: 0;
