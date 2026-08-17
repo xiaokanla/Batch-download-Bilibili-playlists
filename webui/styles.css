@@ -274,11 +274,8 @@ h3 {
 }
 
 .dropdown-menu {
-  position: absolute;
-  z-index: 140;
-  top: calc(100% + 8px);
-  left: 0;
-  right: 0;
+  position: fixed;
+  z-index: 1000;
   max-height: 320px;
   overflow: auto;
   padding: 8px;

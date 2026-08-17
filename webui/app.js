@@ -213,9 +213,26 @@ function updateFavDropdownLabel(entries = Object.entries(app.state?.favData || {
   });
 }
 
+function positionFavDropdownMenu() {
+  const button = $("favDropdownBtn");
+  const menu = $("favDropdownMenu");
+  if (!button || !menu || menu.classList.contains("hidden")) return;
+  const rect = button.getBoundingClientRect();
+  const margin = 8;
+  const viewportGap = 12;
+  const top = rect.bottom + margin;
+  const maxHeight = Math.max(160, window.innerHeight - top - viewportGap);
+  menu.style.left = `${Math.round(rect.left)}px`;
+  menu.style.top = `${Math.round(top)}px`;
+  menu.style.width = `${Math.round(rect.width)}px`;
+  menu.style.maxHeight = `${Math.min(320, maxHeight)}px`;
+}
+
 function closeFavDropdown() {
   $("favDropdown").classList.remove("open");
-  $("favDropdownMenu").classList.add("hidden");
+  const menu = $("favDropdownMenu");
+  menu.classList.add("hidden");
+  menu.removeAttribute("style");
 }
 
 function toggleFavDropdown() {
@@ -224,6 +241,7 @@ function toggleFavDropdown() {
   const open = menu.classList.contains("hidden");
   root.classList.toggle("open", open);
   menu.classList.toggle("hidden", !open);
+  if (open) requestAnimationFrame(positionFavDropdownMenu);
 }
 
 function renderMetrics() {
@@ -886,9 +904,12 @@ function bindEvents() {
     event.stopPropagation();
     toggleFavDropdown();
   };
+  $("favDropdownMenu").onclick = (event) => event.stopPropagation();
   document.addEventListener("click", (event) => {
     if (!$("favDropdown").contains(event.target)) closeFavDropdown();
   });
+  window.addEventListener("resize", positionFavDropdownMenu);
+  document.querySelector(".rail")?.addEventListener("scroll", positionFavDropdownMenu, { passive: true });
   $("modeFav").onclick = () => {
     app.mode = "fav";
     app.page = 1;
