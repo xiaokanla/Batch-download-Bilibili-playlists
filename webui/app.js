@@ -1037,6 +1037,14 @@ function bindEvents() {
       toast(error.message);
     }
   };
+  $("openHistoryLocationBtn").onclick = async () => {
+    try {
+      const result = await api("/api/history/open-location", { method: "POST", body: {} });
+      toast(`已打开记录位置：${result.path || result.dir || ""}`);
+    } catch (error) {
+      toast(error.message);
+    }
+  };
   $("chooseDirBtn").onclick = async () => {
     const result = await api("/api/choose-dir", { method: "POST", body: {} });
     if (result.path) {

@@ -988,6 +988,21 @@ class WebBiliApp:
         self.log(f"已导出下载记录：{path}")
         return {"path": path, "count": len(data)}
 
+    def open_history_location(self):
+        os.makedirs(USERDATA_DIR, exist_ok=True)
+        target = DOWNLOAD_RECORDS_PATH if os.path.exists(DOWNLOAD_RECORDS_PATH) else USERDATA_DIR
+        if os.name == "nt":
+            if os.path.isfile(target):
+                subprocess.Popen(["explorer", f"/select,{target}"])
+            else:
+                os.startfile(target)
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", target])
+        else:
+            subprocess.Popen(["xdg-open", target])
+        self.log(f"已打开下载记录位置：{target}")
+        return {"path": target, "dir": USERDATA_DIR}
+
     def record_download(self, bvid, item=None, file_path=""):
         if not bvid:
             return
@@ -1877,6 +1892,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(APP.import_history(payload.get("path", "")))
             if path == "/api/history/export":
                 return self.send_json(APP.export_history(payload.get("path", "")))
+            if path == "/api/history/open-location":
+                return self.send_json(APP.open_history_location())
             if path == "/api/settings":
                 return self.send_json(APP.set_app_settings(payload))
             if path == "/api/diagnostics":
