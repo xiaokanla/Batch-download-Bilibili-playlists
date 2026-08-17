@@ -2,7 +2,7 @@
 
 BiliDownloader Studio 是一个面向 B 站收藏夹批量下载、历史去重、Eagle 视频导入和视频套图封面生成的本地 Web 工具。
 
-> 当前正式版：`v1.2.6-nopopup`
+> 当前正式版：`v1.2.7-dropdownfix`
 
 ## 下载
 
@@ -10,9 +10,9 @@ BiliDownloader Studio 是一个面向 B 站收藏夹批量下载、历史去重�
 
 最新正式包：
 
-- `BiliDownloaderStudio_Release_NoPopup_20260816.zip`
-- zip SHA256：`CE8D62A3D274FD09CD0467204DB1A91BE887C9236920062EC48FB975B2E1E640`
-- exe SHA256：`931F1A4BA80584480C649455221A4D043EF553097FFE382657E9C74DB10A5C14`
+- `BiliDownloaderStudio_Release_1.2.7_DropdownFix_20260818.zip`
+- zip SHA256：`E9212036F1DBB4C485668DB4C28CB8FE389FE7ABA2A52FF333B9A4333F39ADD4`
+- exe SHA256：`352AE761B1E07EB559887A9DB7CA8D8C6326035FB4C4A598AB5C8A30D7A0DB07`
 
 ## 主要功能
 
@@ -20,6 +20,7 @@ BiliDownloader Studio 是一个面向 B 站收藏夹批量下载、历史去重�
 - 按收藏夹、月份、时长、下载状态筛选视频。
 - 批量下载选中视频，支持暂停、取消、限速、音频下载和分 P 下载。
 - 导入/导出历史下载记录，换设备后避免重复下载。
+- 一键打开下载记录文件位置，方便迁移记录。
 - 将已下载视频导入 Eagle 指定文件夹。
 - 为 Eagle 视频生成套图缩略图：优先使用 B 站封面和弹幕峰值帧，匹配不到 BV 时自动退回本地抽帧。
 - 自定义路径：数据目录、下载目录、FFmpeg、FFprobe、Aria2、Eagle 缓存导出目录、错误日志。
@@ -88,6 +89,12 @@ http://127.0.0.1:8765
 - 任何 Cookie、账号、私人收藏夹缓存
 
 ## 最新修复
+
+### v1.2.7-dropdownfix
+
+- 修复收藏夹下拉框被“筛选”面板遮挡的问题。
+- 静态 UI 文件改为禁缓存加载，避免运行旧页面导致修复不生效。
+- 新增“打开记录位置”按钮，方便迁移 `download_records.json`。
 
 ### v1.2.6-nopopup
 
