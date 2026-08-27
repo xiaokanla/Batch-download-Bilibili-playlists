@@ -10,9 +10,8 @@ BiliDownloader Studio 是一个面向 B 站收藏夹批量下载、历史去重�
 
 最新正式包：
 
-- `BiliDownloaderStudio_Release_1.2.7_DropdownFix_20260818.zip`
-- zip SHA256：`E9212036F1DBB4C485668DB4C28CB8FE389FE7ABA2A52FF333B9A4333F39ADD4`
-- exe SHA256：`352AE761B1E07EB559887A9DB7CA8D8C6326035FB4C4A598AB5C8A30D7A0DB07`
+- `BiliDownloaderStudio_Release_1.3.0_TagCloud_20260827.zip`
+- 校验值请下载同一 Release 中的 `SHA256SUMS.txt`。
 
 ## 主要功能
 
