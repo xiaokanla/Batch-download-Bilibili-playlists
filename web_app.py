@@ -13,7 +13,6 @@ import sys
 import threading
 import time
 import webbrowser
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
@@ -33,7 +32,7 @@ APP_DIR = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else 
 WEB_DIR = os.path.join(RESOURCE_DIR, "webui")
 DEFAULT_USERDATA_DIR = os.path.join(APP_DIR, "userdata")
 BOOTSTRAP_SETTINGS_PATH = os.path.join(DEFAULT_USERDATA_DIR, "app_settings.json")
-APP_VERSION = "1.2.7-dropdownfix"
+APP_VERSION = "1.3.0-tag-cloud"
 APP_FLAVOR = "release"
 
 
@@ -53,10 +52,27 @@ DOWNLOAD_RECORDS_PATH = os.path.join(USERDATA_DIR, "download_records.json")
 EAGLE_CONFIG_PATH = os.path.join(USERDATA_DIR, "eagle_config.json")
 EAGLE_INDEX_PATH = os.path.join(USERDATA_DIR, "eagle_item_index.json")
 BILI_SEARCH_CACHE_PATH = os.path.join(USERDATA_DIR, "bili_title_search_cache.json")
+BILI_TAG_CACHE_PATH = os.path.join(USERDATA_DIR, "bili_video_tags.json")
 APP_SETTINGS_PATH = os.path.join(USERDATA_DIR, "app_settings.json")
 EAGLE_DIR = os.path.join(RESOURCE_DIR, "eagle_integration")
 if EAGLE_DIR not in sys.path:
     sys.path.insert(0, EAGLE_DIR)
+
+
+def configure_userdata_paths(data_dir):
+    """Keep all user-data files under the currently selected data directory."""
+    global USERDATA_DIR, CACHE_DIR, DOWNLOAD_RECORDS_PATH
+    global EAGLE_CONFIG_PATH, EAGLE_INDEX_PATH, BILI_SEARCH_CACHE_PATH, BILI_TAG_CACHE_PATH, APP_SETTINGS_PATH
+
+    USERDATA_DIR = os.path.abspath(str(data_dir or DEFAULT_USERDATA_DIR))
+    CACHE_DIR = os.path.join(USERDATA_DIR, "_web_cache")
+    DOWNLOAD_RECORDS_PATH = os.path.join(USERDATA_DIR, "download_records.json")
+    EAGLE_CONFIG_PATH = os.path.join(USERDATA_DIR, "eagle_config.json")
+    EAGLE_INDEX_PATH = os.path.join(USERDATA_DIR, "eagle_item_index.json")
+    BILI_SEARCH_CACHE_PATH = os.path.join(USERDATA_DIR, "bili_title_search_cache.json")
+    BILI_TAG_CACHE_PATH = os.path.join(USERDATA_DIR, "bili_video_tags.json")
+    APP_SETTINGS_PATH = os.path.join(USERDATA_DIR, "app_settings.json")
+    os.makedirs(USERDATA_DIR, exist_ok=True)
 
 
 class WebBiliApp:
@@ -66,9 +82,34 @@ class WebBiliApp:
         self.fav_folders = []
         self.fav_videos = []
         self.manual_videos = []
+        self.creator_videos = []
+        self.creator_source = {"mid": "", "name": "", "total": 0}
         self.logs = []
         self.sync_progress = 0
         self.sync_running = False
+        self.creator_sync_progress = 0
+        self.creator_sync_running = False
+        self.tag_task = {
+            "running": False,
+            "cancelled": False,
+            "progress": 0,
+            "total": 0,
+            "done": 0,
+            "cached": 0,
+            "failed": 0,
+            "status": "等待生成词云",
+        }
+        self.tag_cloud = {
+            "source": "",
+            "range": "",
+            "month": "",
+            "downloadedOnly": False,
+            "items": 0,
+            "itemsWithTags": 0,
+            "tags": [],
+            "tagBvids": {},
+            "updatedAt": "",
+        }
         self.worker = None
         os.makedirs(USERDATA_DIR, exist_ok=True)
         self.settings = {
@@ -82,13 +123,17 @@ class WebBiliApp:
         }
         self.settings.update(self.load_json_file(APP_SETTINGS_PATH, {}))
         self.settings["dataDir"] = self.settings.get("dataDir") or USERDATA_DIR
-        manager_module.BASE_DIR = self.settings["dataDir"]
+        configure_userdata_paths(self.settings["dataDir"])
+        manager_module.BASE_DIR = USERDATA_DIR
         manager_module.NETSCAPE_TEMP = os.path.join(APP_DIR, "bili_netscape_temp.txt")
         manager_module.LAST_LOGIN_COOKIE = os.path.join(APP_DIR, "last_login_cookie.json")
         self.mgr = BiliManager()
         self.apply_runtime_paths()
         self.download_records = self.load_json_file(DOWNLOAD_RECORDS_PATH, {})
         self.bili_search_cache = self.load_json_file(BILI_SEARCH_CACHE_PATH, {})
+        self.tag_cache = self.load_json_file(BILI_TAG_CACHE_PATH, {})
+        if not isinstance(self.tag_cache, dict):
+            self.tag_cache = {}
         self.last_bili_search_at = 0.0
         eagle_defaults = {
             "libraryDir": "",
@@ -165,10 +210,10 @@ class WebBiliApp:
             pass
 
     def reset_to_fresh_install(self):
-        global USERDATA_DIR, CACHE_DIR, DOWNLOAD_RECORDS_PATH, EAGLE_CONFIG_PATH, EAGLE_INDEX_PATH, BILI_SEARCH_CACHE_PATH, APP_SETTINGS_PATH
+        global USERDATA_DIR, CACHE_DIR, DOWNLOAD_RECORDS_PATH, EAGLE_CONFIG_PATH, EAGLE_INDEX_PATH, BILI_SEARCH_CACHE_PATH, BILI_TAG_CACHE_PATH, APP_SETTINGS_PATH
         with self.lock:
-            if self.sync_running or self.download.get("running") or self.eagle_task.get("running"):
-                raise RuntimeError("请先停止正在运行的同步、下载或 Eagle 任务")
+            if self.sync_running or self.creator_sync_running or self.tag_task.get("running") or self.download.get("running") or self.eagle_task.get("running"):
+                raise RuntimeError("请先停止正在运行的同步、词云、下载或 Eagle 任务")
             current_data_dir = os.path.abspath(self.settings.get("dataDir") or USERDATA_DIR)
         self._reset_data_tree(current_data_dir)
         self._reset_sidecar_files()
@@ -179,6 +224,7 @@ class WebBiliApp:
         EAGLE_CONFIG_PATH = os.path.join(USERDATA_DIR, "eagle_config.json")
         EAGLE_INDEX_PATH = os.path.join(USERDATA_DIR, "eagle_item_index.json")
         BILI_SEARCH_CACHE_PATH = os.path.join(USERDATA_DIR, "bili_title_search_cache.json")
+        BILI_TAG_CACHE_PATH = os.path.join(USERDATA_DIR, "bili_video_tags.json")
         APP_SETTINGS_PATH = os.path.join(USERDATA_DIR, "app_settings.json")
         manager_module.BASE_DIR = USERDATA_DIR
         manager_module.NETSCAPE_TEMP = os.path.join(APP_DIR, "bili_netscape_temp.txt")
@@ -195,6 +241,7 @@ class WebBiliApp:
             }
             self.download_records = {}
             self.bili_search_cache = {}
+            self.tag_cache = {}
             self.eagle = {
                 "libraryDir": "",
                 "folderId": "",
@@ -208,9 +255,34 @@ class WebBiliApp:
             self.fav_folders = []
             self.fav_videos = []
             self.manual_videos = []
+            self.creator_videos = []
+            self.creator_source = {"mid": "", "name": "", "total": 0}
             self.logs = []
             self.sync_progress = 0
             self.sync_running = False
+            self.creator_sync_progress = 0
+            self.creator_sync_running = False
+            self.tag_task = {
+                "running": False,
+                "cancelled": False,
+                "progress": 0,
+                "total": 0,
+                "done": 0,
+                "cached": 0,
+                "failed": 0,
+                "status": "等待生成词云",
+            }
+            self.tag_cloud = {
+                "source": "",
+                "range": "",
+                "month": "",
+                "downloadedOnly": False,
+                "items": 0,
+                "itemsWithTags": 0,
+                "tags": [],
+                "tagBvids": {},
+                "updatedAt": "",
+            }
             self.user = {"loggedIn": False, "name": "未登录", "mid": "guest"}
             self.eagle_task = {
                 "running": False,
@@ -260,6 +332,35 @@ class WebBiliApp:
         return bool(path) and os.path.isdir(str(path))
 
     def apply_runtime_paths(self):
+        configure_userdata_paths(self.settings.get("dataDir") or DEFAULT_USERDATA_DIR)
+        manager_module.BASE_DIR = USERDATA_DIR
+        if hasattr(self, "mgr"):
+            self.mgr.init_paths()
+            self.mgr.load_data()
+        if hasattr(self, "download_records"):
+            self.download_records = self.load_json_file(DOWNLOAD_RECORDS_PATH, {})
+        if hasattr(self, "bili_search_cache"):
+            self.bili_search_cache = self.load_json_file(BILI_SEARCH_CACHE_PATH, {})
+        if hasattr(self, "tag_cache"):
+            self.tag_cache = self.load_json_file(BILI_TAG_CACHE_PATH, {})
+            if not isinstance(self.tag_cache, dict):
+                self.tag_cache = {}
+        if hasattr(self, "eagle"):
+            eagle_defaults = {
+                "libraryDir": "",
+                "folderId": "",
+                "speedMode": "\u5e73\u8861",
+                "deleteAfterImport": True,
+                "useDanmaku": True,
+            }
+            self.eagle = {**eagle_defaults, **self.load_json_file(EAGLE_CONFIG_PATH, {})}
+        if hasattr(self, "eagle_index"):
+            old_index = self.load_json_file(EAGLE_INDEX_PATH, {})
+            self.eagle_index = {
+                "library": old_index.get("library", "") if isinstance(old_index, dict) else "",
+                "count": old_index.get("count", 0) if isinstance(old_index, dict) else 0,
+                "generatedAt": old_index.get("generatedAt", "") if isinstance(old_index, dict) else "",
+            }
         mapping = {
             "BILI_FFMPEG_PATH": self.settings.get("ffmpegPath") or "",
             "BILI_FFPROBE_PATH": self.settings.get("ffprobePath") or "",
@@ -314,6 +415,217 @@ class WebBiliApp:
         except Exception as exc:
             self.log(f"收藏夹缓存保存失败：{exc}")
 
+    @staticmethod
+    def _clean_tag_names(values):
+        seen = set()
+        result = []
+        for value in values or []:
+            name = re.sub(r"\s+", " ", str(value or "").strip())
+            if not name or len(name) > 48:
+                continue
+            key = name.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            result.append(name)
+        return result[:40]
+
+    def _tag_names_for_bvid(self, bvid):
+        cached = self.tag_cache.get(str(bvid), {})
+        if isinstance(cached, dict):
+            return self._clean_tag_names(cached.get("tags"))
+        if isinstance(cached, list):
+            return self._clean_tag_names(cached)
+        return []
+
+    def _tag_source_items_locked(self, source):
+        sources = {
+            "fav": self.fav_videos,
+            "creator": self.creator_videos,
+            "manual": self.manual_videos,
+        }
+        if source not in sources:
+            raise RuntimeError("无效的词云数据来源")
+        return [dict(item) for item in sources[source] if str(item.get("bvid") or "").strip()]
+
+    @staticmethod
+    def _parse_video_date(value):
+        try:
+            return datetime.datetime.strptime(str(value or "")[:10], "%Y-%m-%d").date()
+        except (TypeError, ValueError):
+            return None
+
+    def _tag_cloud_scope_locked(self, payload):
+        source = str(payload.get("source") or "fav").strip()
+        range_key = str(payload.get("range") or "12m").strip()
+        month = str(payload.get("month") or "").strip()
+        downloaded_only = bool(payload.get("downloadedOnly"))
+        if range_key not in {"3m", "6m", "12m", "month"}:
+            raise RuntimeError("无效的词云时间范围")
+        if range_key == "month" and not re.fullmatch(r"\d{4}-\d{2}", month):
+            raise RuntimeError("请选择要分析的月份")
+
+        items = self._tag_source_items_locked(source)
+        history = self.effective_history_set_locked()
+        today = datetime.date.today()
+        days_by_range = {"3m": 92, "6m": 184, "12m": 366}
+        scoped = []
+        seen = set()
+        for item in items:
+            bvid = str(item.get("bvid") or "").strip()
+            if not bvid or bvid in seen:
+                continue
+            if downloaded_only and bvid not in history:
+                continue
+            video_date = self._parse_video_date(item.get("date"))
+            if range_key == "month":
+                if not video_date or item.get("month") != month:
+                    continue
+            elif not video_date or video_date < today - datetime.timedelta(days=days_by_range[range_key]):
+                continue
+            seen.add(bvid)
+            scoped.append(item)
+        return source, range_key, month, downloaded_only, scoped
+
+    def _build_tag_cloud_locked(self, source, range_key, month, downloaded_only, items):
+        counts = {}
+        tag_bvids = {}
+        items_with_tags = 0
+        for item in items:
+            bvid = str(item.get("bvid") or "").strip()
+            tags = self._tag_names_for_bvid(bvid)
+            if not tags:
+                continue
+            items_with_tags += 1
+            for tag in tags:
+                counts[tag] = counts.get(tag, 0) + 1
+                tag_bvids.setdefault(tag, []).append(bvid)
+        ordered = sorted(counts, key=lambda name: (-counts[name], name.casefold()))[:60]
+        return {
+            "source": source,
+            "range": range_key,
+            "month": month,
+            "downloadedOnly": downloaded_only,
+            "items": len(items),
+            "itemsWithTags": items_with_tags,
+            "tags": [{"name": name, "count": counts[name]} for name in ordered],
+            "tagBvids": {name: tag_bvids[name] for name in ordered},
+            "updatedAt": datetime.datetime.now().isoformat(timespec="seconds"),
+        }
+
+    def _fetch_video_tags(self, bvid):
+        response = self.mgr.session.get(
+            "https://api.bilibili.com/x/tag/archive/tags",
+            params={"bvid": bvid},
+            timeout=15,
+        )
+        if response.status_code in (403, 412, 429):
+            raise RuntimeError("B 站暂时限制了标签读取，已停止词云生成")
+        data = response.json()
+        if data.get("code") in (-412, -352, 412, 352):
+            raise RuntimeError("B 站暂时限制了标签读取，已停止词云生成")
+        if data.get("code") != 0:
+            raise RuntimeError(data.get("message", "读取视频标签失败"))
+        return self._clean_tag_names(
+            item.get("tag_name") or item.get("name")
+            for item in (data.get("data") or [])
+            if isinstance(item, dict)
+        )
+
+    def start_tag_cloud(self, payload):
+        with self.lock:
+            if self.sync_running or self.creator_sync_running:
+                raise RuntimeError("请等待当前收藏夹或投稿同步结束后再生成词云")
+            if self.tag_task.get("running"):
+                raise RuntimeError("词云生成任务正在运行")
+            source, range_key, month, downloaded_only, items = self._tag_cloud_scope_locked(payload)
+            if not items:
+                raise RuntimeError("当前时间范围内没有可分析的视频")
+            missing_bvids = [
+                str(item.get("bvid") or "").strip()
+                for item in items
+                if str(item.get("bvid") or "").strip() not in self.tag_cache
+            ]
+            cached_count = len(items) - len(missing_bvids)
+            self.tag_cloud = self._build_tag_cloud_locked(source, range_key, month, downloaded_only, items)
+            self.tag_task = {
+                "running": bool(missing_bvids),
+                "cancelled": False,
+                "progress": 1 if not missing_bvids else 0,
+                "total": len(missing_bvids),
+                "done": 0,
+                "cached": cached_count,
+                "failed": 0,
+                "status": "已使用本地标签缓存" if not missing_bvids else "准备低频读取视频标签",
+            }
+        if not missing_bvids:
+            self.log(f"词云已从本地缓存生成：{len(items)} 个视频")
+            return {"started": False, "cached": cached_count, "total": len(items)}
+
+        def _task():
+            failed = 0
+            stopped_by_risk = False
+            try:
+                self.log(f"开始低频读取视频标签：{len(missing_bvids)} 个待补齐，缓存 {cached_count} 个")
+                time.sleep(random.uniform(1.4, 2.6))
+                for index, bvid in enumerate(missing_bvids, start=1):
+                    with self.lock:
+                        if self.tag_task.get("cancelled"):
+                            break
+                    if index > 1:
+                        time.sleep(random.uniform(1.15, 1.9))
+                    try:
+                        tags = self._fetch_video_tags(bvid)
+                        with self.lock:
+                            self.tag_cache[bvid] = {
+                                "tags": tags,
+                                "fetchedAt": datetime.datetime.now().isoformat(timespec="seconds"),
+                            }
+                    except Exception as exc:
+                        failed += 1
+                        text = str(exc)
+                        self.log(f"标签读取跳过 {bvid}: {text[:120]}")
+                        if "限制" in text or "风控" in text:
+                            stopped_by_risk = True
+                    with self.lock:
+                        self.tag_task["done"] = index
+                        self.tag_task["failed"] = failed
+                        self.tag_task["progress"] = index / len(missing_bvids)
+                        self.tag_task["status"] = "已检测到风控，正在停止" if stopped_by_risk else f"正在读取标签 {index}/{len(missing_bvids)}"
+                        if index % 8 == 0:
+                            self.save_json_file(BILI_TAG_CACHE_PATH, self.tag_cache)
+                    if stopped_by_risk:
+                        break
+            finally:
+                with self.lock:
+                    self.save_json_file(BILI_TAG_CACHE_PATH, self.tag_cache)
+                    self.tag_cloud = self._build_tag_cloud_locked(source, range_key, month, downloaded_only, items)
+                    cancelled = bool(self.tag_task.get("cancelled"))
+                    self.tag_task["running"] = False
+                    self.tag_task["progress"] = 1 if not stopped_by_risk and not cancelled else self.tag_task.get("progress", 0)
+                    if stopped_by_risk:
+                        self.tag_task["status"] = "已因风控停止，已缓存的标签仍可使用"
+                    elif cancelled:
+                        self.tag_task["status"] = "已取消，已读取的标签已保存"
+                    else:
+                        self.tag_task["status"] = f"词云已生成，失败 {failed} 个"
+                if stopped_by_risk:
+                    self.log("词云标签读取因风控响应停止")
+                elif cancelled:
+                    self.log("词云标签读取已取消")
+                else:
+                    self.log(f"词云生成完成：{len(items)} 个视频，标签覆盖 {self.tag_cloud['itemsWithTags']} 个")
+
+        threading.Thread(target=_task, daemon=True).start()
+        return {"started": True, "cached": cached_count, "total": len(items)}
+
+    def cancel_tag_cloud(self):
+        with self.lock:
+            if self.tag_task.get("running"):
+                self.tag_task["cancelled"] = True
+                self.tag_task["status"] = "正在取消词云生成..."
+        return {"ok": True}
+
     def normalize_url(self, url):
         if not url:
             return ""
@@ -322,6 +634,24 @@ class WebBiliApp:
         if url.startswith("http://"):
             return "https://" + url[len("http://"):]
         return url
+
+    @staticmethod
+    def duration_to_seconds(value):
+        text = str(value or "").strip()
+        if not text:
+            return 0
+        try:
+            return int(float(text))
+        except (TypeError, ValueError):
+            pass
+        parts = text.split(":")
+        try:
+            seconds = 0
+            for part in parts:
+                seconds = seconds * 60 + int(part)
+            return seconds
+        except (TypeError, ValueError):
+            return 0
 
     def check_env_tools(self):
         ffmpeg_candidates = [
@@ -491,6 +821,10 @@ class WebBiliApp:
                 "favFolders": self.fav_folders,
                 "favVideos": self.fav_videos,
                 "manualVideos": self.manual_videos,
+                "creatorVideos": self.creator_videos,
+                "creatorSource": self.creator_source,
+                "tagCloud": self.tag_cloud,
+                "tagTask": self.tag_task,
                 "history": list(effective_history),
                 "downloadRecords": self.download_records,
                 "settings": self.settings,
@@ -499,6 +833,7 @@ class WebBiliApp:
                 "eagleIndex": self.eagle_index,
                 "logs": self.logs[-160:],
                 "sync": {"running": self.sync_running, "progress": self.sync_progress},
+                "creatorSync": {"running": self.creator_sync_running, "progress": self.creator_sync_progress},
                 "download": self.download,
                 "build": {"version": APP_VERSION, "flavor": APP_FLAVOR},
             }
@@ -525,6 +860,12 @@ class WebBiliApp:
             if self.settings.get("errorLogPath"):
                 os.makedirs(os.path.dirname(self.settings["errorLogPath"]), exist_ok=True)
             self.save_json_file(APP_SETTINGS_PATH, self.settings)
+            # Keep a copy in the selected directory so the data directory is
+            # portable when it is moved to another computer.
+            self.save_json_file(
+                os.path.join(os.path.abspath(self.settings["dataDir"]), "app_settings.json"),
+                self.settings,
+            )
             if os.path.abspath(os.path.dirname(APP_SETTINGS_PATH)) != os.path.abspath(DEFAULT_USERDATA_DIR):
                 self.save_json_file(BOOTSTRAP_SETTINGS_PATH, self.settings)
             elif os.path.abspath(self.settings["dataDir"]) != os.path.abspath(USERDATA_DIR):
@@ -609,6 +950,8 @@ class WebBiliApp:
             self.fav_data = {}
             self.fav_folders = []
             self.fav_videos = []
+            self.creator_videos = []
+            self.creator_source = {"mid": "", "name": "", "keyword": "", "total": 0}
         self.log("已退出登录")
 
     def import_external_fav(self, value):
@@ -646,15 +989,22 @@ class WebBiliApp:
                 self.sync_progress = 0
             videos = []
             page_size = 20
-            max_workers = 3
-            request_gap = (0.16, 0.42)
             api_url = "https://api.bilibili.com/x/v3/fav/resource/list"
-            img_key, sub_key = WbiSigner.get_wbi_keys(self.mgr.session)
-            headers = dict(self.mgr.session.headers)
-            cookies = self.mgr.session.cookies.get_dict()
             cached_videos = self.load_fav_cache(fid)
             cached_by_bvid = {item.get("bvid"): item for item in cached_videos}
             cached_bvids = set(cached_by_bvid)
+            first_sync = not cached_bvids
+            # A new device has no local cache. Keep the first pass deliberately
+            # serial and slow to avoid a burst immediately after login.
+            request_gap = (1.35, 2.65) if first_sync else (0.75, 1.55)
+            first_request_delay = random.uniform(1.2, 2.4) if first_sync else random.uniform(0.4, 1.0)
+            if first_sync:
+                # WBI key discovery is also a Bilibili request. Delay it too,
+                # otherwise the list request would still follow login abruptly.
+                time.sleep(first_request_delay)
+            img_key, sub_key = WbiSigner.get_wbi_keys(self.mgr.session)
+            headers = dict(self.mgr.session.headers)
+            cookies = self.mgr.session.cookies.get_dict()
 
             def build_params(page):
                 params = {"media_id": fid, "pn": page, "ps": page_size, "keyword": "", "order": "mtime", "type": 0, "tid": 0, "platform": "web"}
@@ -678,9 +1028,9 @@ class WebBiliApp:
                 return items
 
             def fetch_page(page):
-                if page > 1:
-                    time.sleep(random.uniform(*request_gap))
-                sess = requests.Session()
+                delay = first_request_delay if page == 1 else random.uniform(*request_gap)
+                time.sleep(delay)
+                sess = self.mgr.session
                 sess.headers.update(headers)
                 sess.cookies.update(cookies)
                 result = sess.get(api_url, params=build_params(page), timeout=15).json()
@@ -702,7 +1052,7 @@ class WebBiliApp:
                 if incremental:
                     self.log(f"收藏夹共 {total_count} 个视频，发现本地缓存，优先增量同步")
                 else:
-                    self.log(f"收藏夹共 {total_count} 个视频，温和并发拉取中")
+                    self.log(f"收藏夹共 {total_count} 个视频，首次同步采用低频串行模式，避免触发风控")
                 with self.lock:
                     self.sync_progress = 1 / total_pages
 
@@ -737,25 +1087,20 @@ class WebBiliApp:
                 if (not incremental) and total_pages > 1:
                     page_results = {}
                     failed_pages = []
-                    workers = min(max_workers, total_pages - 1)
-                    with ThreadPoolExecutor(max_workers=workers) as executor:
-                        future_map = {executor.submit(fetch_page, page): page for page in range(2, total_pages + 1)}
-                        done_pages = 1
-                        for future in as_completed(future_map):
-                            page_no = future_map[future]
-                            try:
-                                _, items, _ = future.result()
-                                page_results[page_no] = items
-                            except Exception as page_error:
-                                if "疑似触发风控" in str(page_error):
-                                    for pending in future_map:
-                                        pending.cancel()
-                                    self.log(str(page_error))
-                                    return
-                                failed_pages.append(page_no)
-                            done_pages += 1
-                            with self.lock:
-                                self.sync_progress = done_pages / total_pages
+                    done_pages = 1
+                    for page_no in range(2, total_pages + 1):
+                        try:
+                            _, items, _ = fetch_page(page_no)
+                            page_results[page_no] = items
+                        except Exception as page_error:
+                            if "疑似触发风控" in str(page_error):
+                                self.log(str(page_error))
+                                return
+                            failed_pages.append(page_no)
+                            self.log(f"第 {page_no} 页同步失败：{page_error}")
+                        done_pages += 1
+                        with self.lock:
+                            self.sync_progress = done_pages / total_pages
                     for page_no in failed_pages:
                         try:
                             _, items, _ = fetch_page(page_no)
@@ -777,6 +1122,160 @@ class WebBiliApp:
             finally:
                 with self.lock:
                     self.sync_running = False
+        threading.Thread(target=_task, daemon=True).start()
+        return {"started": True}
+
+    def search_creator_accounts(self, value):
+        query = str(value or "").strip()
+        if not query:
+            raise RuntimeError("请输入账号名称、UID 或主页链接")
+        if len(query) > 120:
+            raise RuntimeError("账号查询内容过长")
+
+        # Resolve an explicit UID locally first; account-name search is only one
+        # low-frequency request and never starts a contribution crawl by itself.
+        mid_match = re.search(r"space\.bilibili\.com/(\d+)", query, flags=re.IGNORECASE)
+        if not mid_match and re.fullmatch(r"\d{1,20}", query):
+            mid_match = re.match(r"(\d+)", query)
+
+        time.sleep(random.uniform(0.65, 1.25))
+        if mid_match:
+            mid = mid_match.group(1)
+            data = self.mgr.session.get(
+                "https://api.bilibili.com/x/web-interface/card",
+                params={"mid": mid},
+                timeout=15,
+            ).json()
+            if data.get("code") in (-412, -352, 412, 352):
+                raise RuntimeError("B 站暂时限制了账号查询，请稍后再试")
+            if data.get("code") != 0:
+                raise RuntimeError(data.get("message", "获取账号信息失败"))
+            card = (data.get("data") or {}).get("card") or {}
+            if not card:
+                raise RuntimeError("没有找到该账号")
+            results = [{
+                "mid": str(card.get("mid") or mid),
+                "name": card.get("name") or mid,
+                "face": self.normalize_url(card.get("face") or ""),
+                "fans": int(card.get("fans") or 0),
+            }]
+        else:
+            data = self.mgr.session.get(
+                "https://api.bilibili.com/x/web-interface/search/type",
+                params={"search_type": "bili_user", "keyword": query, "page": 1, "page_size": 10},
+                timeout=15,
+            ).json()
+            if data.get("code") in (-412, -352, 412, 352):
+                raise RuntimeError("B 站暂时限制了账号搜索，请稍后再试")
+            if data.get("code") != 0:
+                raise RuntimeError(data.get("message", "搜索账号失败"))
+            results = []
+            for item in (data.get("data") or {}).get("result") or []:
+                mid = str(item.get("mid") or "").strip()
+                if not mid:
+                    continue
+                results.append({
+                    "mid": mid,
+                    "name": re.sub(r"<[^>]+>", "", str(item.get("uname") or mid)),
+                    "face": self.normalize_url(item.get("upic") or item.get("face") or ""),
+                    "fans": int(item.get("fans") or 0),
+                })
+        self.log(f"账号检索完成：{len(results)} 个候选")
+        return {"results": results}
+
+    def sync_creator_videos(self, payload):
+        mid = re.sub(r"\D", "", str(payload.get("mid") or ""))
+        name = re.sub(r"\s+", " ", str(payload.get("name") or "").strip())[:80]
+        if not mid:
+            raise RuntimeError("请先选择一个账号")
+        with self.lock:
+            if self.sync_running or self.creator_sync_running:
+                raise RuntimeError("已有 B 站列表同步任务在运行，请等待结束后再试")
+            self.creator_sync_running = True
+            self.creator_sync_progress = 0
+
+        def parse_videos(items):
+            videos = []
+            for item in items:
+                bvid = str(item.get("bvid") or "").strip()
+                if not bvid:
+                    continue
+                created = int(item.get("created") or 0)
+                dt = datetime.datetime.fromtimestamp(created) if created else datetime.datetime.now()
+                videos.append({
+                    "title": re.sub(r"<[^>]+>", "", str(item.get("title") or bvid)),
+                    "bvid": bvid,
+                    "date": dt.strftime("%Y-%m-%d"),
+                    "year": dt.strftime("%Y"),
+                    "month": dt.strftime("%Y-%m"),
+                    "duration": self.duration_to_seconds(item.get("length") or item.get("duration")),
+                    "cover": self.normalize_url(item.get("pic") or item.get("cover") or ""),
+                })
+            return videos
+
+        def _task():
+            page_size = 50
+            api_url = "https://api.bilibili.com/x/space/wbi/arc/search"
+            videos = []
+            try:
+                self.log(f"开始获取账号投稿：{name or mid}")
+                # The login/session request and first list page are deliberately
+                # separated. All pages remain serial and stop at risk-control codes.
+                time.sleep(random.uniform(1.2, 2.2))
+                img_key, sub_key = WbiSigner.get_wbi_keys(self.mgr.session)
+
+                def fetch_page(page):
+                    params = {
+                        "mid": mid,
+                        "pn": page,
+                        "ps": page_size,
+                        "tid": 0,
+                        "keyword": "",
+                        "order": "pubdate",
+                        "platform": "web",
+                        "web_location": 1550101,
+                    }
+                    if img_key and sub_key:
+                        params = WbiSigner.enc_wbi(params, img_key, sub_key)
+                    response = self.mgr.session.get(api_url, params=params, timeout=15).json()
+                    if response.get("code") in (-412, -352, 412, 352):
+                        raise RuntimeError("疑似触发风控，已停止获取账号投稿")
+                    if response.get("code") != 0:
+                        raise RuntimeError(response.get("message", "获取投稿失败"))
+                    data = response.get("data") or {}
+                    page_data = data.get("page") or {}
+                    return parse_videos((data.get("list") or {}).get("vlist") or []), int(page_data.get("count") or 0)
+
+                first_items, total = fetch_page(1)
+                videos.extend(first_items)
+                total_pages = max(1, math.ceil(total / page_size)) if first_items else 1
+                with self.lock:
+                    self.creator_sync_progress = 1 / total_pages
+                for page in range(2, total_pages + 1):
+                    time.sleep(random.uniform(1.35, 2.45))
+                    items, _ = fetch_page(page)
+                    videos.extend(items)
+                    with self.lock:
+                        self.creator_sync_progress = page / total_pages
+                unique_videos = []
+                seen = set()
+                for item in videos:
+                    if item["bvid"] in seen:
+                        continue
+                    seen.add(item["bvid"])
+                    unique_videos.append(item)
+                videos = unique_videos
+                with self.lock:
+                    self.creator_videos = videos
+                    self.creator_source = {"mid": mid, "name": name or mid, "total": total}
+                    self.creator_sync_progress = 1
+                self.log(f"账号投稿获取完成：{len(videos)} 个视频")
+            except Exception as exc:
+                self.log(f"账号投稿获取失败：{exc}")
+            finally:
+                with self.lock:
+                    self.creator_sync_running = False
+
         threading.Thread(target=_task, daemon=True).start()
         return {"started": True}
 
@@ -925,6 +1424,7 @@ class WebBiliApp:
         with self.lock:
             self.fav_videos = [item for item in self.fav_videos if item["bvid"] not in bset]
             self.manual_videos = [item for item in self.manual_videos if item["bvid"] not in bset]
+            self.creator_videos = [item for item in self.creator_videos if item["bvid"] not in bset]
         return {"ok": True}
 
     def choose_file(self):
@@ -935,7 +1435,11 @@ class WebBiliApp:
         root.attributes("-topmost", True)
         path = filedialog.askopenfilename(
             title="选择下载记录文件",
-            filetypes=[("History JSON", "history.json"), ("JSON files", "*.json"), ("All files", "*.*")]
+            filetypes=[
+                ("BiliDownloader 记录包", "*.json"),
+                ("所有 JSON 文件", "*.json"),
+                ("所有文件", "*.*"),
+            ]
         )
         root.destroy()
         return {"path": path}
@@ -955,6 +1459,8 @@ class WebBiliApp:
             raise RuntimeError("请选择 history.json 或旧程序 userdata 文件夹")
         if os.path.isdir(path):
             candidates = [
+                os.path.join(path, "download_records.json"),
+                os.path.join(path, "bili_history_bundle.json"),
                 os.path.join(path, "history.json"),
                 os.path.join(path, "bili_history.json"),
             ]
@@ -963,30 +1469,81 @@ class WebBiliApp:
             raise RuntimeError("未找到可导入的历史记录文件")
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
-        if isinstance(data, dict):
-            values = data.get("history") or data.get("bvids") or data.get("items") or []
-        else:
+
+        imported_records = {}
+        values = []
+        if isinstance(data, list):
+            # Legacy export: a plain list of BV ids.
             values = data
-        bvids = {str(x).strip() for x in values if re.match(r"^BV[a-zA-Z0-9]+$", str(x).strip())}
-        before = len(self.mgr.history)
+        elif isinstance(data, dict):
+            values = data.get("history") or data.get("bvids") or data.get("items") or []
+            bundle_records = data.get("downloadRecords") or data.get("records")
+            if isinstance(bundle_records, dict):
+                imported_records.update(bundle_records)
+            elif isinstance(bundle_records, list):
+                for record in bundle_records:
+                    if isinstance(record, dict):
+                        bvid = str(record.get("bvid") or "").strip()
+                        if bvid:
+                            imported_records[bvid] = record
+
+            # Also accept the native download_records.json format, whose keys
+            # are BV ids and whose values contain title/path/downloadedAt.
+            if not imported_records and not values:
+                for key, record in data.items():
+                    bvid = str(record.get("bvid") or key).strip() if isinstance(record, dict) else str(key).strip()
+                    if re.match(r"^BV[a-zA-Z0-9]+$", bvid) and isinstance(record, dict):
+                        imported_records[bvid] = {**record, "bvid": bvid}
+
+        bvids = {
+            str(x.get("bvid") if isinstance(x, dict) else x).strip()
+            for x in values
+            if re.match(r"^BV[a-zA-Z0-9]+$", str(x.get("bvid") if isinstance(x, dict) else x).strip())
+        }
+        bvids.update(
+            bvid for bvid in imported_records
+            if re.match(r"^BV[a-zA-Z0-9]+$", str(bvid).strip())
+        )
+        if not bvids:
+            raise RuntimeError("文件中没有识别到可导入的 BV 记录")
+
         with self.lock:
+            before = set(self.effective_history_set_locked())
             self.mgr.history.update(bvids)
+            for bvid, record in imported_records.items():
+                if not re.match(r"^BV[a-zA-Z0-9]+$", str(bvid).strip()) or not isinstance(record, dict):
+                    continue
+                normalized = {**record, "bvid": str(bvid).strip()}
+                old = self.download_records.get(str(bvid), {})
+                if isinstance(old, dict):
+                    normalized = {**old, **normalized}
+                self.download_records[str(bvid).strip()] = normalized
             self.mgr.save_data()
-        added = len(self.mgr.history) - before
-        self.log(f"导入下载记录：新增 {added} 条，总计 {len(self.mgr.history)} 条")
-        return {"added": added, "total": len(self.mgr.history)}
+            self.save_json_file(DOWNLOAD_RECORDS_PATH, self.download_records)
+            after = set(self.effective_history_set_locked())
+        added = len(after - before)
+        self.log(f"导入下载记录：新增 {added} 条，总计 {len(after)} 条，完整记录 {len(imported_records)} 条")
+        return {"added": added, "total": len(after), "records": len(imported_records)}
 
     def export_history(self, path):
         if not path:
             raise RuntimeError("请选择导出目录")
         if os.path.isdir(path):
-            path = os.path.join(path, f"bili_history_{self.user.get('mid', 'guest')}.json")
+            path = os.path.join(path, "bili_history_bundle.json")
         with self.lock:
-            data = sorted(self.mgr.history)
+            data = {
+                "format": "bili_downloader_history_bundle",
+                "version": 2,
+                "exportedAt": datetime.datetime.now().isoformat(timespec="seconds"),
+                "history": sorted(self.effective_history_set_locked()),
+                "downloadRecords": self.download_records if isinstance(self.download_records, dict) else {},
+            }
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
-        self.log(f"已导出下载记录：{path}")
-        return {"path": path, "count": len(data)}
+        count = len(data["history"])
+        record_count = len(data["downloadRecords"])
+        self.log(f"已导出完整下载记录：{path}（{count} 条历史，{record_count} 条详细记录）")
+        return {"path": path, "count": count, "records": record_count}
 
     def open_history_location(self):
         os.makedirs(USERDATA_DIR, exist_ok=True)
@@ -1722,7 +2279,7 @@ class WebBiliApp:
             raise RuntimeError("请选择有效保存目录")
         if save_dir != self.settings.get("downloadDir"):
             self.set_app_settings({"downloadDir": save_dir})
-        all_items = self.fav_videos + self.manual_videos
+        all_items = self.fav_videos + self.manual_videos + self.creator_videos
         items = []
         seen = set()
         for item in all_items:
@@ -1876,6 +2433,14 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(APP.import_external_fav(payload.get("value", "")))
             if path == "/api/sync":
                 return self.send_json(APP.sync_fav(str(payload.get("fid", ""))))
+            if path == "/api/creator/search":
+                return self.send_json(APP.search_creator_accounts(payload.get("query", "")))
+            if path == "/api/creator/sync":
+                return self.send_json(APP.sync_creator_videos(payload))
+            if path == "/api/tags/cloud":
+                return self.send_json(APP.start_tag_cloud(payload))
+            if path == "/api/tags/cancel":
+                return self.send_json(APP.cancel_tag_cloud())
             if path == "/api/import/season":
                 return self.send_json(APP.import_collection(payload.get("value", "")))
             if path == "/api/manual/extract":

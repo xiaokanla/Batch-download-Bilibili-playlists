@@ -38,6 +38,8 @@ BiliDownloader_0705/
 
 `dataDir` 是启动级配置。程序启动时会先读取默认 `userdata/app_settings.json`，如果其中设置了 `dataDir`，后续缓存、下载记录和用户历史会优先使用该目录。修改 `dataDir` 后需要重启。
 
+程序会把 `download_records.json`、`history.json`、收藏夹缓存、Eagle 索引、搜索缓存和 `bili_video_tags.json` 标签缓存统一放在当前 `dataDir`。切换自定义数据目录时，相关路径也会同步更新；不要在代码中单独拼接默认 `userdata` 路径。
+
 ## 3. Web API
 
 常用接口：
@@ -45,6 +47,10 @@ BiliDownloader_0705/
 - `GET /api/state`：获取完整前端状态。
 - `POST /api/login/qr`：生成登录二维码。
 - `POST /api/sync`：同步收藏夹。
+- `POST /api/creator/search`：按账号名称、UID 或空间主页查找账号候选。
+- `POST /api/creator/sync`：低频串行获取指定账号的公开投稿；前端用顶部搜索栏本地筛选。
+- `POST /api/tags/cloud`：手动生成标签词云；仅补齐本地 `bili_video_tags.json` 中不存在的 BV 标签。
+- `POST /api/tags/cancel`：请求停止当前标签词云任务。
 - `POST /api/download/start`：启动下载。
 - `POST /api/eagle/import`：导入已下载视频到 Eagle。
 - `POST /api/eagle/folder-thumbnails`：修复 Eagle 文件夹内本地视频缩略图。
@@ -53,7 +59,7 @@ BiliDownloader_0705/
 ## 4. 下载流程
 
 1. 前端提交选中的 BV 和下载设置。
-2. `web_app.py` 汇总当前收藏夹/手动列表中的视频元数据。
+2. `web_app.py` 汇总当前收藏夹、账号投稿或手动列表中的视频元数据。
 3. 创建 `DownloadWorker`。
 4. `worker.py` 使用 yt-dlp 下载视频。
 5. 如果使用外部 Aria2 失败，会自动禁用 Aria2 并回退。
@@ -91,10 +97,18 @@ BiliDownloader_0705/
 - 优先用本地缓存和历史记录。
 - 请求 B 站接口前先判断是否必要。
 - 不做高并发标题搜索。
+- 新设备首次同步收藏夹使用低频串行分页；遇到 `-412`、`-352`、`412`、`352` 立即停止。
+- 账号投稿检索只返回候选账号；确认账号后才启动投稿分页。投稿分页同样必须低频串行，遇到风控码立即停止。
+- 标准收藏夹/投稿同步不得自动读取视频标签。标签只能由用户手动发起词云生成，逐个串行读取，并缓存到 `bili_video_tags.json`。
+- 标签请求首次等待约 1.4-2.6 秒，后续请求间隔约 1.15-1.9 秒；遇到 `-412`、`-352`、`403`、`412` 或 `429` 必须立即停止。
 - 对 412、429、403 立即降级或跳过。
 - 不因追求速度牺牲账号安全。
 
-## 7. 开源清理清单
+## 7. 历史记录迁移格式
+
+“导出记录”生成的 `bili_history_bundle.json` 是完整迁移包，包含 `history` 和 `downloadRecords` 两部分。导入端同时兼容完整迁移包、原生 `download_records.json`、旧版纯 BV 列表以及旧版 `history.json` / `bili_history.json`。导入时必须同时写入当前设备的 `history.json` 和 `download_records.json`，否则前端可能只能看到 BV 去重状态，无法恢复标题、路径和下载时间等详细信息。
+
+## 8. 开源清理清单
 
 提交前确认 `.gitignore` 排除：
 
@@ -106,7 +120,7 @@ BiliDownloader_0705/
 - 下载视频目录
 - `eagle_integration/exports/` 中的个人缓存
 
-## 8. 验证命令
+## 9. 验证命令
 
 ```bash
 python -m py_compile web_app.py worker.py

@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>BiliDownloader Studio</title>
-    <link rel="stylesheet" href="/styles.css?v=20260817-dropdown" />
+    <link rel="stylesheet" href="/styles.css?v=20260828-tag-cloud" />
   </head>
   <body>
     <div class="shell">
@@ -29,7 +29,7 @@
           </div>
         </section>
 
-        <section class="panel fav-source-panel">
+        <section id="favSourcePanel" class="panel fav-source-panel">
           <div class="eyebrow">第 2 步 · 选择收藏夹</div>
           <div id="favDropdown" class="dropdown">
             <button id="favDropdownBtn" class="dropdown-btn" type="button">
@@ -53,6 +53,18 @@
           </details>
         </section>
 
+        <section id="creatorSourcePanel" class="panel creator-source-panel hidden">
+          <div class="eyebrow">第 2 步 · 账号投稿</div>
+          <input id="creatorQuery" class="input" placeholder="账号名称、UID 或主页链接" />
+          <button id="creatorSearchBtn" class="btn ghost full">查找账号</button>
+          <select id="creatorResults" class="select" disabled>
+            <option value="">先查找并选择账号</option>
+          </select>
+          <div class="progress slim"><span id="creatorSyncProgress"></span></div>
+          <button id="creatorSyncBtn" class="btn primary full" disabled>获取投稿列表</button>
+          <div id="creatorSyncHint" class="helper-text">获取后可用顶部搜索栏筛选标题或 BV 号。</div>
+        </section>
+
         <section class="panel">
           <div class="eyebrow">筛选</div>
           <select id="durationFilter" class="select">
@@ -72,14 +84,15 @@
         <header class="top glass">
           <div>
             <div class="eyebrow">本地 Web UI</div>
-            <h2>收藏夹下载工作台</h2>
-            <p class="top-subtitle">按页面上的步骤操作，不需要了解技术细节。</p>
+            <h2 id="workbenchTitle">收藏夹下载工作台</h2>
+            <p id="workbenchSubtitle" class="top-subtitle">按页面上的步骤操作，不需要了解技术细节。</p>
           </div>
           <div class="search">
             <input id="searchInput" placeholder="搜索标题 / BV 号" />
           </div>
           <div class="segmented">
             <button id="modeFav" class="active">收藏夹</button>
+            <button id="modeCreator">账号投稿</button>
             <button id="modeManual">手动</button>
           </div>
         </header>
@@ -135,6 +148,35 @@
             <select id="yearSelect" class="select compact"></select>
           </div>
           <div id="monthChart" class="month-chart"></div>
+        </section>
+
+        <section class="panel tag-cloud-panel">
+          <div class="panel-head">
+            <div>
+              <div class="eyebrow">标签分析</div>
+              <div id="tagCloudTitle" class="chart-title">词云</div>
+            </div>
+            <button id="clearTagFilterBtn" class="icon-btn hidden" type="button" title="清除标签筛选" aria-label="清除标签筛选">×</button>
+          </div>
+          <div class="tag-cloud-controls">
+            <select id="tagRange" class="select compact">
+              <option value="3m">近 3 个月</option>
+              <option value="6m">近 6 个月</option>
+              <option value="12m" selected>近 1 年</option>
+              <option value="month">指定月份</option>
+            </select>
+            <select id="tagMonth" class="select compact hidden"></select>
+          </div>
+          <label class="toggle compact-toggle"><input id="tagDownloadedOnly" type="checkbox" /> 仅已下载</label>
+          <div class="row gap">
+            <button id="generateTagCloudBtn" class="btn ghost">生成词云</button>
+            <button id="cancelTagCloudBtn" class="btn danger hidden">停止</button>
+          </div>
+          <div class="progress slim"><span id="tagCloudProgress"></span></div>
+          <div id="tagCloudStatus" class="helper-text">选择范围后生成词云。</div>
+          <div id="tagCloudWords" class="tag-cloud-words">
+            <div class="muted">标签会缓存到本地，后续分析无需重复读取。</div>
+          </div>
         </section>
 
         <section class="panel diagnostics-panel">
@@ -260,6 +302,10 @@
     </div>
 
     <div id="favDropdownMenu" class="dropdown-menu dropdown-portal hidden"></div>
-    <script src="/app.js?v=20260817-dropdown"></script>
+    <div id="videoContextMenu" class="video-context-menu hidden" role="menu">
+      <button id="openVideoPageBtn" type="button" role="menuitem">打开视频网页</button>
+      <button id="copyVideoBvidBtn" type="button" role="menuitem">复制 BV 号</button>
+    </div>
+    <script src="/app.js?v=20260828-tag-cloud"></script>
   </body>
 </html>

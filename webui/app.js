@@ -22,6 +22,11 @@ const app = {
   eagleFoldersLoading: false,
   diagnostics: null,
   diagnosticsLoading: false,
+  contextMenuBvid: "",
+  creatorCandidates: [],
+  selectedCreatorMid: "",
+  tagFilter: "",
+  tagFilterBvids: null,
 };
 
 async function api(path, options = {}) {
@@ -64,6 +69,7 @@ function formatDuration(seconds) {
 
 function currentItems() {
   if (!app.state) return [];
+  if (app.mode === "creator") return app.state.creatorVideos || [];
   return app.mode === "fav" ? app.state.favVideos : app.state.manualVideos;
 }
 
@@ -76,7 +82,8 @@ function filteredItems() {
   const history = historySet();
   return currentItems().filter((item) => {
     if (keyword && !`${item.title} ${item.bvid}`.toLowerCase().includes(keyword)) return false;
-    if (app.mode === "fav" && app.monthFilter && item.month !== app.monthFilter) return false;
+    if (app.tagFilterBvids && !app.tagFilterBvids.has(item.bvid)) return false;
+    if (app.mode !== "manual" && app.monthFilter && item.month !== app.monthFilter) return false;
     if (app.undoneOnly && history.has(item.bvid)) return false;
     const d = Number(item.duration || 0);
     if (app.duration === "<1分钟" && !(d < 60)) return false;
@@ -95,9 +102,12 @@ function renderState() {
   $("syncProgress").style.width = `${Math.round((app.state.sync?.progress || 0) * 100)}%`;
   $("metricSync").textContent = app.state.sync?.running ? "Syncing" : "Idle";
 
+  renderModeLayout();
   renderFavSelect();
+  renderCreatorSource();
   renderMetrics();
   renderChart();
+  renderTagCloud();
   renderListIfNeeded();
   renderDownload();
   renderEagle();
@@ -110,11 +120,35 @@ function renderState() {
 function guideStatus() {
   const loggedIn = Boolean(app.state?.user?.loggedIn);
   const hasFolders = Boolean((app.state?.favFolders || []).length || Object.keys(app.state?.favData || {}).length);
-  const hasVideos = Boolean((app.state?.favVideos || []).length || (app.state?.manualVideos || []).length);
+  const hasVideos = Boolean((app.state?.favVideos || []).length || (app.state?.manualVideos || []).length || (app.state?.creatorVideos || []).length);
   const hasSelected = app.selected.size > 0;
   const hasDownloadDir = Boolean(($("saveDir")?.value || app.state?.settings?.downloadDir || "").trim());
   const hasDownloadedLocalVideos = Object.values(app.state?.downloadRecords || {}).some((record) => record.path);
   const eagleLibrary = Boolean(($("eagleLibrary")?.value || app.state?.eagle?.libraryDir || "").trim());
+  if (app.mode === "creator") {
+    const hasCreator = Boolean(app.selectedCreatorMid);
+    const hasCreatorVideos = Boolean((app.state?.creatorVideos || []).length);
+    if (!hasCreator) {
+      return {
+        step: 2,
+        title: "查找要下载投稿的账号",
+        description: "输入账号名称、UID 或主页链接，选择正确账号后再获取投稿列表。",
+        action: "查找账号",
+        target: "creatorSearchBtn",
+        help: "账号检索不会自动抓取投稿。",
+      };
+    }
+    if (!hasCreatorVideos) {
+      return {
+        step: 2,
+        title: "获取账号投稿列表",
+        description: "获取公开投稿后，可用顶部搜索栏筛选“角色 PV”等标题或 BV 号。",
+        action: "获取投稿列表",
+        target: "creatorSyncBtn",
+        help: "分页获取采用低频串行模式，数量很多时会更久。",
+      };
+    }
+  }
   if (!loggedIn) {
     return {
       step: 1,
@@ -155,6 +189,159 @@ function guideStatus() {
     target: hasDownloadedLocalVideos ? (eagleLibrary ? "eagleImportBtn" : "chooseEagleBtn") : "startBtn",
     help: "不使用 Eagle 的话，到下载完成这一步就可以结束。",
   };
+}
+
+function setMode(mode) {
+  app.mode = mode;
+  app.page = 1;
+  app.monthFilter = "";
+  clearTagFilter();
+  ["fav", "creator", "manual"].forEach((name) => {
+    $(`mode${name[0].toUpperCase()}${name.slice(1)}`).classList.toggle("active", name === mode);
+  });
+  renderModeLayout();
+  renderMetrics();
+  renderChart();
+  renderTagCloud();
+  renderListIfNeeded(true);
+  renderGuide();
+}
+
+function renderModeLayout() {
+  const creatorMode = app.mode === "creator";
+  $("favSourcePanel").classList.toggle("hidden", creatorMode);
+  $("creatorSourcePanel").classList.toggle("hidden", !creatorMode);
+  $("workbenchTitle").textContent = creatorMode ? "账号投稿下载" : app.mode === "manual" ? "手动视频下载" : "收藏夹下载工作台";
+  $("workbenchSubtitle").textContent = creatorMode
+    ? "先选择账号，获取公开投稿后可用顶部搜索筛选。"
+    : app.mode === "manual"
+      ? "通过视频链接、BV 号或合集添加要下载的视频。"
+      : "按页面上的步骤操作，不需要了解技术细节。";
+  $("searchInput").placeholder = creatorMode ? "筛选当前账号投稿的标题 / BV 号" : "搜索标题 / BV 号";
+}
+
+function renderCreatorSource() {
+  const task = app.state?.creatorSync || {};
+  const select = $("creatorResults");
+  const syncBtn = $("creatorSyncBtn");
+  $("creatorSyncProgress").style.width = `${Math.round((task.progress || 0) * 100)}%`;
+  if (!app.creatorCandidates.some((item) => String(item.mid) === String(app.selectedCreatorMid))) {
+    app.selectedCreatorMid = "";
+  }
+  if (select.dataset.signature !== JSON.stringify(app.creatorCandidates.map((item) => [item.mid, item.name, item.fans]))) {
+    const options = app.creatorCandidates.map((item) => {
+      const fans = Number(item.fans || 0);
+      const suffix = fans ? ` · ${fans.toLocaleString()} 粉丝` : "";
+      return `<option value="${escapeAttr(item.mid)}">${escapeHtml(item.name)}${escapeHtml(suffix)} · UID ${escapeHtml(item.mid)}</option>`;
+    });
+    select.innerHTML = `<option value="">请选择账号</option>${options.join("")}`;
+    select.dataset.signature = JSON.stringify(app.creatorCandidates.map((item) => [item.mid, item.name, item.fans]));
+  }
+  select.disabled = !app.creatorCandidates.length || Boolean(task.running);
+  select.value = app.selectedCreatorMid;
+  syncBtn.disabled = !app.selectedCreatorMid || Boolean(task.running);
+  $("creatorSearchBtn").disabled = Boolean(task.running);
+  const source = app.state?.creatorSource || {};
+  if (task.running) {
+    $("creatorSyncHint").textContent = `正在低频获取投稿：${Math.round((task.progress || 0) * 100)}%`;
+  } else if (source.mid && (app.state?.creatorVideos || []).length) {
+    $("creatorSyncHint").textContent = `当前列表：${source.name || source.mid} · ${(app.state.creatorVideos || []).length} 个视频，可用顶部搜索栏筛选`;
+  } else {
+    $("creatorSyncHint").textContent = "检索账号后，选择一个候选账号，再获取公开投稿。";
+  }
+}
+
+function clearTagFilter() {
+  app.tagFilter = "";
+  app.tagFilterBvids = null;
+}
+
+function tagCloudSourceLabel() {
+  if (app.mode === "creator") return "账号投稿";
+  if (app.mode === "manual") return "手动列表";
+  return "收藏夹";
+}
+
+function availableTagMonths() {
+  return [...new Set(currentItems()
+    .map((item) => String(item.month || ""))
+    .filter((month) => /^\d{4}-\d{2}$/.test(month)))]
+    .sort()
+    .reverse();
+}
+
+function renderTagMonthOptions() {
+  const select = $("tagMonth");
+  const months = availableTagMonths();
+  const current = select.value;
+  select.innerHTML = months.length
+    ? months.map((month) => `<option value="${escapeAttr(month)}">${escapeHtml(month)}</option>`).join("")
+    : `<option value="">暂无可选月份</option>`;
+  if (months.includes(current)) select.value = current;
+  select.classList.toggle("hidden", $("tagRange").value !== "month");
+}
+
+function renderTagCloud() {
+  const task = app.state?.tagTask || {};
+  const cloud = app.state?.tagCloud || {};
+  const words = $("tagCloudWords");
+  if (!words) return;
+
+  renderTagMonthOptions();
+  $("tagCloudTitle").textContent = `${tagCloudSourceLabel()}词云`;
+  const running = Boolean(task.running);
+  const range = $("tagRange").value;
+  const month = $("tagMonth").value;
+  const downloadedOnly = $("tagDownloadedOnly").checked;
+  const matchesCloud = cloud.source === app.mode
+    && cloud.range === range
+    && Boolean(cloud.downloadedOnly) === downloadedOnly
+    && (range !== "month" || cloud.month === month);
+  const progress = Math.max(0, Math.min(1, Number(task.progress || 0)));
+  $("tagCloudProgress").style.width = `${Math.round(progress * 100)}%`;
+  $("generateTagCloudBtn").disabled = running || !currentItems().length;
+  $("cancelTagCloudBtn").classList.toggle("hidden", !running);
+  $("clearTagFilterBtn").classList.toggle("hidden", !app.tagFilter);
+
+  if (running) {
+    $("tagCloudStatus").textContent = `${task.status || "正在读取标签"} · ${task.done || 0}/${task.total || 0} · 缓存 ${task.cached || 0} · 失败 ${task.failed || 0}`;
+  } else if (matchesCloud && cloud.tags?.length) {
+    const scope = cloud.range === "month" ? (cloud.month || "指定月份") : ({
+      "3m": "近 3 个月",
+      "6m": "近 6 个月",
+      "12m": "近 1 年",
+    }[cloud.range] || "当前范围");
+    $("tagCloudStatus").textContent = `${scope} · ${cloud.itemsWithTags || 0}/${cloud.items || 0} 个视频已有标签${cloud.downloadedOnly ? " · 仅已下载" : ""}`;
+  } else if (task.status && task.status !== "等待生成词云") {
+    $("tagCloudStatus").textContent = task.status;
+  } else {
+    $("tagCloudStatus").textContent = currentItems().length ? "手动生成；标签会缓存在本地。" : "请先加载视频列表。";
+  }
+
+  if (!matchesCloud || !cloud.tags?.length) {
+    words.innerHTML = `<div class="muted">标签会缓存到本地，后续分析无需重复读取。</div>`;
+    return;
+  }
+
+  const max = Math.max(1, ...cloud.tags.map((tag) => Number(tag.count || 0)));
+  words.innerHTML = cloud.tags.map((tag) => {
+    const ratio = Number(tag.count || 0) / max;
+    const size = Math.round(12 + ratio * 10);
+    const active = app.tagFilter === tag.name ? "active" : "";
+    return `<button class="tag-word ${active}" type="button" data-tag="${escapeAttr(tag.name)}" style="--word-size:${size}px" title="${escapeAttr(`${tag.name} · ${tag.count} 个视频`)}">${escapeHtml(tag.name)}<span>${tag.count}</span></button>`;
+  }).join("");
+  words.querySelectorAll(".tag-word").forEach((button) => {
+    button.onclick = () => {
+      const name = button.dataset.tag;
+      const bvids = cloud.tagBvids?.[name] || [];
+      app.tagFilter = name;
+      app.tagFilterBvids = new Set(bvids);
+      app.page = 1;
+      renderMetrics();
+      renderListIfNeeded(true);
+      renderTagCloud();
+    };
+  });
 }
 
 function renderGuide() {
@@ -265,10 +452,11 @@ function renderChart() {
   const chart = $("monthChart");
   const select = $("yearSelect");
   if (!chart || !select || !app.state) return;
-  const items = app.state.favVideos || [];
+  const items = app.mode === "creator" ? (app.state.creatorVideos || []) : (app.state.favVideos || []);
+  $("chartTitle").textContent = app.mode === "creator" ? "投稿月份分布" : "月份分布";
   if (!items.length) {
     select.innerHTML = "";
-    chart.innerHTML = `<div class="empty">暂无收藏夹数据</div>`;
+    chart.innerHTML = `<div class="empty">暂无当前数据</div>`;
     return;
   }
   const years = [...new Set(items.map((x) => x.year).filter(Boolean))].sort().reverse();
@@ -308,12 +496,10 @@ function renderChart() {
   }).join("");
   chart.querySelectorAll(".month-bar").forEach((bar) => {
     bar.onclick = () => {
+      if (app.mode === "manual") return;
       const month = bar.dataset.month;
       app.monthFilter = app.monthFilter === month ? "" : month;
-      app.mode = "fav";
       app.page = 1;
-      $("modeFav").classList.add("active");
-      $("modeManual").classList.remove("active");
       renderMetrics();
       renderChart();
       renderListIfNeeded(true);
@@ -335,6 +521,7 @@ function renderListIfNeeded(force = false) {
     groupByMonth: app.groupByMonth,
     monthFilter: app.monthFilter,
     search: app.search,
+    tagFilter: app.tagFilter,
     selected: [...app.selected].sort(),
     history: [...historySet()].sort(),
     items: pageItems.map((x) => [x.bvid, x.title, x.cover, x.month, x.duration]),
@@ -360,7 +547,7 @@ function renderList(pageItems, totalPages) {
   let lastMonth = "";
   const html = [];
   for (const item of pageItems) {
-    if (app.mode === "fav" && app.groupByMonth && item.month !== lastMonth) {
+    if (app.mode !== "manual" && app.groupByMonth && item.month !== lastMonth) {
       lastMonth = item.month;
       html.push(`<div class="month">${escapeHtml(lastMonth || "未分组")}</div>`);
     }
@@ -389,14 +576,38 @@ function renderList(pageItems, totalPages) {
     card.querySelector(".check").addEventListener("change", () => toggleSelect(bvid));
     card.addEventListener("contextmenu", (event) => {
       event.preventDefault();
-      navigator.clipboard?.writeText(bvid);
-      toast(`已复制 ${bvid}`);
+      showVideoContextMenu(event.clientX, event.clientY, bvid);
     });
   });
   list.querySelectorAll(".cover img").forEach((img) => {
     img.addEventListener("load", () => img.classList.add("loaded"));
     if (img.complete) img.classList.add("loaded");
   });
+}
+
+function videoPageUrl(bvid) {
+  return `https://www.bilibili.com/video/${encodeURIComponent(String(bvid || "").trim())}`;
+}
+
+function showVideoContextMenu(clientX, clientY, bvid) {
+  const menu = $("videoContextMenu");
+  if (!menu || !bvid) return;
+  app.contextMenuBvid = String(bvid);
+  menu.classList.remove("hidden");
+  menu.style.left = "0px";
+  menu.style.top = "0px";
+
+  const padding = 8;
+  const maxLeft = Math.max(padding, window.innerWidth - menu.offsetWidth - padding);
+  const maxTop = Math.max(padding, window.innerHeight - menu.offsetHeight - padding);
+  menu.style.left = `${Math.min(Math.max(padding, clientX), maxLeft)}px`;
+  menu.style.top = `${Math.min(Math.max(padding, clientY), maxTop)}px`;
+}
+
+function hideVideoContextMenu() {
+  const menu = $("videoContextMenu");
+  if (menu) menu.classList.add("hidden");
+  app.contextMenuBvid = "";
 }
 
 function renderDownload() {
@@ -921,24 +1132,55 @@ function bindEvents() {
   });
   window.addEventListener("resize", positionFavDropdownMenu);
   document.querySelector(".rail")?.addEventListener("scroll", positionFavDropdownMenu, { passive: true });
-  $("modeFav").onclick = () => {
-    app.mode = "fav";
-    app.page = 1;
-    $("modeFav").classList.add("active");
-    $("modeManual").classList.remove("active");
-    renderMetrics();
-    renderChart();
-    renderListIfNeeded(true);
+  $("modeFav").onclick = () => setMode("fav");
+  $("modeCreator").onclick = () => setMode("creator");
+  $("modeManual").onclick = () => setMode("manual");
+  $("creatorSearchBtn").onclick = async () => {
+    const query = $("creatorQuery").value.trim();
+    if (!query) return toast("请输入账号名称、UID 或主页链接");
+    app.creatorCandidates = [];
+    app.selectedCreatorMid = "";
+    renderCreatorSource();
+    try {
+      const result = await api("/api/creator/search", {
+        method: "POST",
+        body: { query },
+      });
+      app.creatorCandidates = result.results || [];
+      if (app.creatorCandidates.length === 1) {
+        app.selectedCreatorMid = String(app.creatorCandidates[0].mid);
+      }
+      if (!app.creatorCandidates.length) toast("没有找到匹配账号");
+      renderCreatorSource();
+      renderGuide();
+    } catch (error) {
+      toast(error.message);
+      renderCreatorSource();
+    }
   };
-  $("modeManual").onclick = () => {
-    app.mode = "manual";
-    app.page = 1;
-    $("modeManual").classList.add("active");
-    $("modeFav").classList.remove("active");
-    app.monthFilter = "";
-    renderMetrics();
-    renderChart();
-    renderListIfNeeded(true);
+  $("creatorResults").onchange = (event) => {
+    app.selectedCreatorMid = event.target.value;
+    renderCreatorSource();
+    renderGuide();
+  };
+  $("creatorSyncBtn").onclick = async () => {
+    const candidate = app.creatorCandidates.find(
+      (item) => String(item.mid) === String(app.selectedCreatorMid),
+    );
+    if (!candidate) return toast("请先选择一个账号");
+    try {
+      await api("/api/creator/sync", {
+        method: "POST",
+        body: {
+          mid: candidate.mid,
+          name: candidate.name,
+        },
+      });
+      toast("已开始低频获取账号投稿");
+      renderCreatorSource();
+    } catch (error) {
+      toast(error.message);
+    }
   };
   $("searchInput").oninput = (e) => {
     app.search = e.target.value;
@@ -1021,7 +1263,7 @@ function bindEvents() {
       const picked = await api("/api/choose-file", { method: "POST", body: {} });
       if (!picked.path) return;
       const result = await api("/api/history/import", { method: "POST", body: { path: picked.path } });
-      toast(`导入完成：新增 ${result.added} 条，总计 ${result.total} 条`);
+      toast(`导入完成：新增 ${result.added} 条，详细记录 ${result.records || 0} 条，总计 ${result.total} 条`);
       await refresh();
     } catch (error) {
       toast(error.message);
@@ -1032,10 +1274,61 @@ function bindEvents() {
       const picked = await api("/api/choose-dir", { method: "POST", body: {} });
       if (!picked.path) return;
       const result = await api("/api/history/export", { method: "POST", body: { path: picked.path } });
-      toast(`已导出 ${result.count} 条记录`);
+      toast(`已导出完整记录包：${result.count} 条历史，${result.records || 0} 条详细记录`);
     } catch (error) {
       toast(error.message);
     }
+  };
+  $("tagRange").onchange = () => {
+    clearTagFilter();
+    renderTagCloud();
+    renderMetrics();
+    renderListIfNeeded(true);
+  };
+  $("tagMonth").onchange = () => {
+    clearTagFilter();
+    renderTagCloud();
+    renderMetrics();
+    renderListIfNeeded(true);
+  };
+  $("tagDownloadedOnly").onchange = () => {
+    clearTagFilter();
+    renderTagCloud();
+    renderMetrics();
+    renderListIfNeeded(true);
+  };
+  $("generateTagCloudBtn").onclick = async () => {
+    try {
+      const result = await api("/api/tags/cloud", {
+        method: "POST",
+        body: {
+          source: app.mode,
+          range: $("tagRange").value,
+          month: $("tagMonth").value,
+          downloadedOnly: $("tagDownloadedOnly").checked,
+        },
+      });
+      toast(result.started ? "已开始低频读取视频标签" : "已使用本地标签缓存生成词云");
+      await refresh();
+    } catch (error) {
+      toast(error.message);
+    }
+  };
+  $("cancelTagCloudBtn").onclick = async () => {
+    try {
+      await api("/api/tags/cancel", { method: "POST", body: {} });
+      toast("正在停止词云生成");
+      await refresh();
+    } catch (error) {
+      toast(error.message);
+    }
+  };
+  $("clearTagFilterBtn").onclick = () => {
+    clearTagFilter();
+    app.page = 1;
+    renderMetrics();
+    renderListIfNeeded(true);
+    renderTagCloud();
   };
   $("openHistoryLocationBtn").onclick = async () => {
     try {
@@ -1237,6 +1530,31 @@ function bindEvents() {
   $("modal").onclick = (event) => {
     if (event.target.id === "modal") closeModal();
   };
+  $("openVideoPageBtn").onclick = () => {
+    const bvid = app.contextMenuBvid;
+    hideVideoContextMenu();
+    if (!bvid) return;
+    window.open(videoPageUrl(bvid), "_blank", "noopener,noreferrer");
+  };
+  $("copyVideoBvidBtn").onclick = async () => {
+    const bvid = app.contextMenuBvid;
+    hideVideoContextMenu();
+    if (!bvid) return;
+    try {
+      await navigator.clipboard?.writeText(bvid);
+      toast(`已复制 ${bvid}`);
+    } catch (error) {
+      toast(`BV 号：${bvid}`);
+    }
+  };
+  document.addEventListener("click", (event) => {
+    if (!event.target.closest("#videoContextMenu")) hideVideoContextMenu();
+  });
+  document.addEventListener("contextmenu", (event) => {
+    if (!event.target.closest(".video-card")) hideVideoContextMenu();
+  });
+  document.addEventListener("scroll", hideVideoContextMenu, true);
+  window.addEventListener("resize", hideVideoContextMenu);
   document.addEventListener("keydown", (event) => {
     if (event.ctrlKey && event.key.toLowerCase() === "a" && document.activeElement.tagName !== "INPUT") {
       event.preventDefault();
@@ -1249,6 +1567,7 @@ function bindEvents() {
       $("searchInput").focus();
     }
     if (event.key === "Escape") {
+      hideVideoContextMenu();
       app.selected.clear();
       renderMetrics();
       renderListIfNeeded(true);

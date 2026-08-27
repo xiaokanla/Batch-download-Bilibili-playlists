@@ -149,8 +149,20 @@ h3 {
   position: relative;
 }
 
+.hidden {
+  display: none !important;
+}
+
 .fav-source-panel {
   z-index: 40;
+}
+
+.creator-source-panel .input {
+  margin-bottom: 10px;
+}
+
+.creator-source-panel .progress {
+  margin-top: 2px;
 }
 
 .account-name {
@@ -899,6 +911,41 @@ h3 {
   background: var(--primary);
 }
 
+.video-context-menu {
+  position: fixed;
+  z-index: 300;
+  min-width: 168px;
+  padding: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 12px;
+  background: rgba(19, 24, 35, 0.97);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.42);
+  backdrop-filter: blur(18px) saturate(130%);
+  animation: contextMenuIn 140ms ease both;
+}
+
+.video-context-menu.hidden {
+  display: none;
+}
+
+.video-context-menu button {
+  display: block;
+  width: 100%;
+  min-height: 36px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 8px;
+  color: var(--text);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.video-context-menu button:hover {
+  color: #ffffff;
+  background: rgba(251, 114, 153, 0.2);
+}
+
 .check {
   width: 20px;
   height: 20px;
@@ -1094,6 +1141,64 @@ h3 {
   gap: 10px;
 }
 
+.tag-cloud-panel {
+  overflow: hidden;
+}
+
+.tag-cloud-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.tag-cloud-controls .select {
+  margin-bottom: 0;
+}
+
+.compact-toggle {
+  margin: 10px 0;
+  font-size: 12px;
+}
+
+.tag-cloud-words {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  min-height: 74px;
+  padding-top: 6px;
+}
+
+.tag-word {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  max-width: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  color: #dce8fa;
+  background: rgba(109, 200, 255, 0.08);
+  font-size: var(--word-size, 14px);
+  line-height: 1.2;
+  padding: 5px 7px;
+  cursor: pointer;
+  transition: color 150ms ease, background 150ms ease, border-color 150ms ease, transform 150ms ease;
+}
+
+.tag-word:hover,
+.tag-word.active {
+  color: #ffffff;
+  border-color: rgba(251, 114, 153, 0.64);
+  background: rgba(251, 114, 153, 0.2);
+  transform: translateY(-1px) translateZ(0);
+}
+
+.tag-word span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+}
+
 .download-status {
   margin-top: 12px;
 }
@@ -1263,6 +1368,17 @@ h3 {
   to {
     opacity: 1;
     transform: translateY(0) scale(1) translateZ(0);
+  }
+}
+
+@keyframes contextMenuIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
   }
 }
 
