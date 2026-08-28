@@ -334,15 +334,15 @@ function renderTagCloud() {
 function renderTagRelationGraph(container, cloud) {
   const graph = cloud.graph || {};
   const fallback = buildTagGraphFallback(cloud);
-  const nodes = (graph.nodes?.length ? graph.nodes : fallback.nodes).slice(0, 36);
+  const nodes = (graph.nodes?.length ? graph.nodes : fallback.nodes).slice(0, 24);
   const edges = graph.edges?.length ? graph.edges : fallback.edges;
   if (!nodes.length) {
     container.innerHTML = `<div class="muted">暂无足够的标签数据。</div>`;
     return;
   }
 
-  const width = 720;
-  const height = 360;
+  const width = 560;
+  const height = 560;
   const centerX = width / 2;
   const centerY = height / 2;
   const maxCount = Math.max(1, ...nodes.map((node) => Number(node.count || 0)));
@@ -365,10 +365,10 @@ function renderTagRelationGraph(container, cloud) {
       positions.set(node.name, { x: centerX, y: centerY, ring: 0 });
       return;
     }
-    const ring = index <= 8 ? 1 : index <= 20 ? 2 : 3;
-    const ringCount = ring === 1 ? 8 : ring === 2 ? 12 : Math.max(1, sortedNodes.length - 20);
-    const ringIndex = ring === 1 ? index - 1 : ring === 2 ? index - 9 : index - 21;
-    const radius = ring === 1 ? 72 : ring === 2 ? 120 : 154;
+    const ring = index <= 6 ? 1 : index <= 14 ? 2 : 3;
+    const ringCount = ring === 1 ? 6 : ring === 2 ? 8 : Math.max(1, sortedNodes.length - 14);
+    const ringIndex = ring === 1 ? index - 1 : ring === 2 ? index - 7 : index - 15;
+    const radius = ring === 1 ? 94 : ring === 2 ? 174 : 228;
     const angle = (Math.PI * 2 * ringIndex / ringCount) - Math.PI / 2 + (ring % 2 ? 0 : Math.PI / ringCount);
     positions.set(node.name, {
       x: centerX + Math.cos(angle) * radius,
@@ -395,17 +395,21 @@ function renderTagRelationGraph(container, cloud) {
     return `<line class="tag-edge${connected ? "" : " dim"}" data-source="${escapeAttr(edge.source)}" data-target="${escapeAttr(edge.target)}" x1="${source.x.toFixed(1)}" y1="${source.y.toFixed(1)}" x2="${target.x.toFixed(1)}" y2="${target.y.toFixed(1)}" stroke-width="${widthValue}" />`;
   }).join("");
 
-  const nodeHtml = sortedNodes.map((node) => {
+  const nodeHtml = sortedNodes.map((node, index) => {
     const position = positions.get(node.name);
     const ratio = Number(node.count || 0) / maxCount;
     const radius = 9 + ratio * 12 + Math.min(4, degree.get(node.name) * 0.35);
     const selected = activeTag === node.name;
     const fill = colorFor(node.name);
-    const labelSize = Math.max(10, Math.min(15, 10 + ratio * 5));
+    const labelSize = Math.max(11, Math.min(16, 11 + ratio * 5));
+    const floatDelay = `${-((index % 7) * 0.65).toFixed(2)}s`;
+    const floatDuration = `${(5.2 + (index % 4) * 0.75).toFixed(2)}s`;
     return `
       <g class="tag-node${selected ? " active" : ""}" data-tag="${escapeAttr(node.name)}" tabindex="0" role="button" aria-label="${escapeAttr(`${node.name}，${node.count} 个视频`)}">
-        <circle cx="${position.x.toFixed(1)}" cy="${position.y.toFixed(1)}" r="${radius.toFixed(1)}" fill="${fill}" />
-        <text x="${position.x.toFixed(1)}" y="${(position.y + radius + 14).toFixed(1)}" font-size="${labelSize.toFixed(1)}">${escapeSvg(node.name)}</text>
+        <g class="tag-node-float" style="--float-delay:${floatDelay};--float-duration:${floatDuration}">
+          <circle cx="${position.x.toFixed(1)}" cy="${position.y.toFixed(1)}" r="${radius.toFixed(1)}" fill="${fill}" />
+          <text x="${position.x.toFixed(1)}" y="${(position.y + radius + 16).toFixed(1)}" font-size="${labelSize.toFixed(1)}">${escapeSvg(node.name)}</text>
+        </g>
         <title>${escapeSvg(`${node.name} · ${node.count} 个视频 · ${degree.get(node.name)} 条关联`)}</title>
       </g>
     `;
@@ -420,7 +424,7 @@ function renderTagRelationGraph(container, cloud) {
             <stop offset="100%" stop-color="#fb7299" stop-opacity="0"></stop>
           </radialGradient>
         </defs>
-        <circle cx="${centerX}" cy="${centerY}" r="105" fill="url(#tagGraphGlow)" />
+        <circle cx="${centerX}" cy="${centerY}" r="132" fill="url(#tagGraphGlow)" />
         <g class="tag-edges">${edgeHtml}</g>
         <g class="tag-nodes">${nodeHtml}</g>
       </svg>
