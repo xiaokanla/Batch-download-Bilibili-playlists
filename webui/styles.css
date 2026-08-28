@@ -42,7 +42,7 @@ select {
 
 .shell {
   display: grid;
-  grid-template-columns: 292px minmax(500px, 1fr) 420px;
+  grid-template-columns: var(--rail-width, 292px) 10px minmax(460px, 1fr) 10px var(--inspector-width, 420px);
   gap: 16px;
   height: 100vh;
   padding: 16px;
@@ -51,6 +51,45 @@ select {
 
 .shell > * {
   min-height: 0;
+}
+
+.layout-resizer {
+  position: relative;
+  z-index: 3;
+  min-width: 10px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.layout-resizer::before {
+  position: absolute;
+  top: 8%;
+  bottom: 8%;
+  left: 50%;
+  width: 2px;
+  border-radius: 999px;
+  background: rgba(178, 189, 208, 0.08);
+  content: "";
+  transform: translateX(-50%);
+  transition: background 160ms ease, box-shadow 160ms ease;
+}
+
+.layout-resizer:hover::before,
+.layout-resizer.dragging::before {
+  background: var(--primary);
+  box-shadow: 0 0 12px rgba(251, 114, 153, 0.72);
+}
+
+body.is-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+body.is-resizing iframe,
+body.is-resizing button,
+body.is-resizing input,
+body.is-resizing select {
+  pointer-events: none;
 }
 
 .glass,
@@ -1471,6 +1510,10 @@ h3 {
   .shell {
     grid-template-columns: 1fr;
     height: auto;
+  }
+
+  .layout-resizer {
+    display: none;
   }
 
   .inspector {

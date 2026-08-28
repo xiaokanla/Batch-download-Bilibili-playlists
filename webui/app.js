@@ -32,6 +32,81 @@ const app = {
   tagFilterBvids: null,
 };
 
+function clampNumber(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function initResizableLayout() {
+  const shell = document.querySelector(".shell");
+  const railResizer = $("railResizer");
+  const inspectorResizer = $("inspectorResizer");
+  if (!shell || !railResizer || !inspectorResizer) return;
+
+  const savedRail = Number(localStorage.getItem("bili-layout-rail-width"));
+  const savedInspector = Number(localStorage.getItem("bili-layout-inspector-width"));
+  if (Number.isFinite(savedRail)) {
+    shell.style.setProperty("--rail-width", `${clampNumber(savedRail, 220, 420)}px`);
+  }
+  if (Number.isFinite(savedInspector)) {
+    shell.style.setProperty("--inspector-width", `${clampNumber(savedInspector, 300, 620)}px`);
+  }
+
+  const startResize = (resizer, type, event) => {
+    if (window.matchMedia("(max-width: 1180px)").matches) return;
+    event.preventDefault();
+    const startX = event.clientX;
+    const startRail = parseFloat(getComputedStyle(shell).getPropertyValue("--rail-width")) || 292;
+    const startInspector = parseFloat(getComputedStyle(shell).getPropertyValue("--inspector-width")) || 420;
+    resizer.classList.add("dragging");
+    document.body.classList.add("is-resizing");
+    resizer.setPointerCapture?.(event.pointerId);
+
+    const move = (moveEvent) => {
+      const delta = moveEvent.clientX - startX;
+      if (type === "rail") {
+        const width = clampNumber(startRail + delta, 220, 420);
+        shell.style.setProperty("--rail-width", `${Math.round(width)}px`);
+        localStorage.setItem("bili-layout-rail-width", String(Math.round(width)));
+        railResizer.setAttribute("aria-valuenow", String(Math.round(width)));
+      } else {
+        const width = clampNumber(startInspector - delta, 300, 620);
+        shell.style.setProperty("--inspector-width", `${Math.round(width)}px`);
+        localStorage.setItem("bili-layout-inspector-width", String(Math.round(width)));
+        inspectorResizer.setAttribute("aria-valuenow", String(Math.round(width)));
+      }
+    };
+    const stop = () => {
+      resizer.classList.remove("dragging");
+      document.body.classList.remove("is-resizing");
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointercancel", stop);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop, { once: true });
+    window.addEventListener("pointercancel", stop, { once: true });
+  };
+
+  railResizer.setAttribute("aria-valuemin", "220");
+  railResizer.setAttribute("aria-valuemax", "420");
+  railResizer.setAttribute("aria-valuenow", String(Math.round(parseFloat(getComputedStyle(shell).getPropertyValue("--rail-width")) || 292)));
+  inspectorResizer.setAttribute("aria-valuemin", "300");
+  inspectorResizer.setAttribute("aria-valuemax", "620");
+  inspectorResizer.setAttribute("aria-valuenow", String(Math.round(parseFloat(getComputedStyle(shell).getPropertyValue("--inspector-width")) || 420)));
+  railResizer.addEventListener("pointerdown", (event) => startResize(railResizer, "rail", event));
+  inspectorResizer.addEventListener("pointerdown", (event) => startResize(inspectorResizer, "inspector", event));
+  railResizer.addEventListener("dblclick", () => {
+    shell.style.setProperty("--rail-width", "292px");
+    localStorage.removeItem("bili-layout-rail-width");
+    railResizer.setAttribute("aria-valuenow", "292");
+  });
+  inspectorResizer.addEventListener("dblclick", () => {
+    shell.style.setProperty("--inspector-width", "420px");
+    localStorage.removeItem("bili-layout-inspector-width");
+    inspectorResizer.setAttribute("aria-valuenow", "420");
+  });
+}
+
 async function api(path, options = {}) {
   const res = await fetch(path, {
     method: options.method || "GET",
@@ -1738,6 +1813,7 @@ function bindEvents() {
   });
 }
 
+initResizableLayout();
 bindEvents();
 refresh();
 setInterval(refresh, 1400);

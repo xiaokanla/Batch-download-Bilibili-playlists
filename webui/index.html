@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>BiliDownloader Studio</title>
-    <link rel="stylesheet" href="/styles.css?v=20260828-tag-graph-float" />
+    <link rel="stylesheet" href="/styles.css?v=20260828-resizable-layout" />
   </head>
   <body>
     <div class="shell">
@@ -79,6 +79,7 @@
           <label class="toggle"><input id="groupByMonth" type="checkbox" checked /> 按月份分组</label>
         </section>
       </aside>
+      <div id="railResizer" class="layout-resizer" role="separator" aria-orientation="vertical" aria-label="调整左侧栏宽度" title="拖动调整左侧栏宽度"></div>
 
       <main class="workspace">
         <header class="top glass">
@@ -137,6 +138,7 @@
 
         <section id="videoList" class="video-list"></section>
       </main>
+      <div id="inspectorResizer" class="layout-resizer" role="separator" aria-orientation="vertical" aria-label="调整右侧栏宽度" title="拖动调整右侧栏宽度"></div>
 
       <aside class="inspector glass">
         <section class="panel chart-panel">
@@ -306,6 +308,6 @@
       <button id="openVideoPageBtn" type="button" role="menuitem">打开视频网页</button>
       <button id="copyVideoBvidBtn" type="button" role="menuitem">复制 BV 号</button>
     </div>
-    <script src="/app.js?v=20260828-tag-graph-float"></script>
+    <script src="/app.js?v=20260828-resizable-layout"></script>
   </body>
 </html>
