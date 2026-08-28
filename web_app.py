@@ -507,16 +507,32 @@ class WebBiliApp:
         counts = {}
         tag_bvids = {}
         items_with_tags = 0
+        item_tags = []
         for item in items:
             bvid = str(item.get("bvid") or "").strip()
             tags = self._tag_names_for_bvid(bvid)
             if not tags:
                 continue
             items_with_tags += 1
-            for tag in tags:
+            unique_tags = list(dict.fromkeys(tags))
+            item_tags.append(unique_tags)
+            for tag in unique_tags:
                 counts[tag] = counts.get(tag, 0) + 1
                 tag_bvids.setdefault(tag, []).append(bvid)
         ordered = sorted(counts, key=lambda name: (-counts[name], name.casefold()))[:60]
+        graph_names = ordered[:36]
+        graph_name_set = set(graph_names)
+        graph_counts = {}
+        for tags in item_tags:
+            graph_tags = [tag for tag in tags if tag in graph_name_set]
+            for index, source_tag in enumerate(graph_tags):
+                for target_tag in graph_tags[index + 1:]:
+                    edge_key = tuple(sorted((source_tag, target_tag)))
+                    graph_counts[edge_key] = graph_counts.get(edge_key, 0) + 1
+        graph_edges = sorted(
+            graph_counts.items(),
+            key=lambda entry: (-entry[1], entry[0][0].casefold(), entry[0][1].casefold()),
+        )[:140]
         return {
             "source": source,
             "range": range_key,
@@ -526,6 +542,14 @@ class WebBiliApp:
             "itemsWithTags": items_with_tags,
             "tags": [{"name": name, "count": counts[name]} for name in ordered],
             "tagBvids": {name: tag_bvids[name] for name in ordered},
+            "graph": {
+                "nodes": [{"name": name, "count": counts[name]} for name in graph_names],
+                "edges": [
+                    {"source": pair[0], "target": pair[1], "count": count}
+                    for pair, count in graph_edges
+                ],
+            },
+            "relationCount": len(graph_edges),
             "updatedAt": datetime.datetime.now().isoformat(timespec="seconds"),
         }
 

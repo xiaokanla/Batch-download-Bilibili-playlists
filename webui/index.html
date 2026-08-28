@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>BiliDownloader Studio</title>
-    <link rel="stylesheet" href="/styles.css?v=20260828-tag-cloud" />
+    <link rel="stylesheet" href="/styles.css?v=20260828-tag-graph" />
   </head>
   <body>
     <div class="shell">
@@ -154,7 +154,7 @@
           <div class="panel-head">
             <div>
               <div class="eyebrow">标签分析</div>
-              <div id="tagCloudTitle" class="chart-title">词云</div>
+              <div id="tagCloudTitle" class="chart-title">标签关系图</div>
             </div>
             <button id="clearTagFilterBtn" class="icon-btn hidden" type="button" title="清除标签筛选" aria-label="清除标签筛选">×</button>
           </div>
@@ -169,13 +169,13 @@
           </div>
           <label class="toggle compact-toggle"><input id="tagDownloadedOnly" type="checkbox" /> 仅已下载</label>
           <div class="row gap">
-            <button id="generateTagCloudBtn" class="btn ghost">生成词云</button>
+            <button id="generateTagCloudBtn" class="btn ghost">生成关系图</button>
             <button id="cancelTagCloudBtn" class="btn danger hidden">停止</button>
           </div>
           <div class="progress slim"><span id="tagCloudProgress"></span></div>
-          <div id="tagCloudStatus" class="helper-text">选择范围后生成词云。</div>
-          <div id="tagCloudWords" class="tag-cloud-words">
-            <div class="muted">标签会缓存到本地，后续分析无需重复读取。</div>
+          <div id="tagCloudStatus" class="helper-text">选择范围后生成标签关系图。</div>
+          <div id="tagCloudWords" class="tag-cloud-graph">
+            <div class="muted">标签会缓存到本地，生成后显示标签之间的关联。</div>
           </div>
         </section>
 
@@ -306,6 +306,6 @@
       <button id="openVideoPageBtn" type="button" role="menuitem">打开视频网页</button>
       <button id="copyVideoBvidBtn" type="button" role="menuitem">复制 BV 号</button>
     </div>
-    <script src="/app.js?v=20260828-tag-cloud"></script>
+    <script src="/app.js?v=20260828-tag-graph"></script>
   </body>
 </html>

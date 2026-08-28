@@ -49,8 +49,8 @@ BiliDownloader_0705/
 - `POST /api/sync`：同步收藏夹。
 - `POST /api/creator/search`：按账号名称、UID 或空间主页查找账号候选。
 - `POST /api/creator/sync`：低频串行获取指定账号的公开投稿；前端用顶部搜索栏本地筛选。
-- `POST /api/tags/cloud`：手动生成标签词云；仅补齐本地 `bili_video_tags.json` 中不存在的 BV 标签。
-- `POST /api/tags/cancel`：请求停止当前标签词云任务。
+- `POST /api/tags/cloud`：手动生成标签关系图；仅补齐本地 `bili_video_tags.json` 中不存在的 BV 标签，并计算标签共现节点和连线。
+- `POST /api/tags/cancel`：请求停止当前标签关系图任务。
 - `POST /api/download/start`：启动下载。
 - `POST /api/eagle/import`：导入已下载视频到 Eagle。
 - `POST /api/eagle/folder-thumbnails`：修复 Eagle 文件夹内本地视频缩略图。
@@ -99,7 +99,7 @@ BiliDownloader_0705/
 - 不做高并发标题搜索。
 - 新设备首次同步收藏夹使用低频串行分页；遇到 `-412`、`-352`、`412`、`352` 立即停止。
 - 账号投稿检索只返回候选账号；确认账号后才启动投稿分页。投稿分页同样必须低频串行，遇到风控码立即停止。
-- 标准收藏夹/投稿同步不得自动读取视频标签。标签只能由用户手动发起词云生成，逐个串行读取，并缓存到 `bili_video_tags.json`。
+- 标准收藏夹/投稿同步不得自动读取视频标签。标签只能由用户手动发起关系图生成，逐个串行读取，并缓存到 `bili_video_tags.json`。
 - 标签请求首次等待约 1.4-2.6 秒，后续请求间隔约 1.15-1.9 秒；遇到 `-412`、`-352`、`403`、`412` 或 `429` 必须立即停止。
 - 对 412、429、403 立即降级或跳过。
 - 不因追求速度牺牲账号安全。

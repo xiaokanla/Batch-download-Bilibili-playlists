@@ -293,7 +293,7 @@ function renderTagCloud() {
   if (!words) return;
 
   renderTagMonthOptions();
-  $("tagCloudTitle").textContent = `${tagCloudSourceLabel()}词云`;
+  $("tagCloudTitle").textContent = `${tagCloudSourceLabel()}标签关系图`;
   const running = Boolean(task.running);
   const range = $("tagRange").value;
   const month = $("tagMonth").value;
@@ -316,37 +316,176 @@ function renderTagCloud() {
       "6m": "近 6 个月",
       "12m": "近 1 年",
     }[cloud.range] || "当前范围");
-    $("tagCloudStatus").textContent = `${scope} · ${cloud.itemsWithTags || 0}/${cloud.items || 0} 个视频已有标签${cloud.downloadedOnly ? " · 仅已下载" : ""}`;
+    $("tagCloudStatus").textContent = `${scope} · ${cloud.itemsWithTags || 0}/${cloud.items || 0} 个视频已有标签 · ${cloud.relationCount || 0} 条关联${cloud.downloadedOnly ? " · 仅已下载" : ""}`;
   } else if (task.status && task.status !== "等待生成词云") {
     $("tagCloudStatus").textContent = task.status;
   } else {
-    $("tagCloudStatus").textContent = currentItems().length ? "手动生成；标签会缓存在本地。" : "请先加载视频列表。";
+    $("tagCloudStatus").textContent = currentItems().length ? "手动生成；标签和关联会缓存在本地。" : "请先加载视频列表。";
   }
 
   if (!matchesCloud || !cloud.tags?.length) {
-    words.innerHTML = `<div class="muted">标签会缓存到本地，后续分析无需重复读取。</div>`;
+    words.innerHTML = `<div class="muted">标签会缓存到本地，生成后显示标签之间的关联。</div>`;
     return;
   }
 
-  const max = Math.max(1, ...cloud.tags.map((tag) => Number(tag.count || 0)));
-  words.innerHTML = cloud.tags.map((tag) => {
-    const ratio = Number(tag.count || 0) / max;
-    const size = Math.round(12 + ratio * 10);
-    const active = app.tagFilter === tag.name ? "active" : "";
-    return `<button class="tag-word ${active}" type="button" data-tag="${escapeAttr(tag.name)}" style="--word-size:${size}px" title="${escapeAttr(`${tag.name} · ${tag.count} 个视频`)}">${escapeHtml(tag.name)}<span>${tag.count}</span></button>`;
+  renderTagRelationGraph(words, cloud);
+}
+
+function renderTagRelationGraph(container, cloud) {
+  const graph = cloud.graph || {};
+  const fallback = buildTagGraphFallback(cloud);
+  const nodes = (graph.nodes?.length ? graph.nodes : fallback.nodes).slice(0, 36);
+  const edges = graph.edges?.length ? graph.edges : fallback.edges;
+  if (!nodes.length) {
+    container.innerHTML = `<div class="muted">暂无足够的标签数据。</div>`;
+    return;
+  }
+
+  const width = 720;
+  const height = 360;
+  const centerX = width / 2;
+  const centerY = height / 2;
+  const maxCount = Math.max(1, ...nodes.map((node) => Number(node.count || 0)));
+  const nodeByName = new Map(nodes.map((node) => [node.name, node]));
+  const degree = new Map(nodes.map((node) => [node.name, 0]));
+  edges.forEach((edge) => {
+    if (nodeByName.has(edge.source) && nodeByName.has(edge.target)) {
+      degree.set(edge.source, degree.get(edge.source) + 1);
+      degree.set(edge.target, degree.get(edge.target) + 1);
+    }
+  });
+
+  const sortedNodes = [...nodes].sort((a, b) => {
+    const degreeDiff = degree.get(b.name) - degree.get(a.name);
+    return degreeDiff || Number(b.count || 0) - Number(a.count || 0);
+  });
+  const positions = new Map();
+  sortedNodes.forEach((node, index) => {
+    if (index === 0) {
+      positions.set(node.name, { x: centerX, y: centerY, ring: 0 });
+      return;
+    }
+    const ring = index <= 8 ? 1 : index <= 20 ? 2 : 3;
+    const ringCount = ring === 1 ? 8 : ring === 2 ? 12 : Math.max(1, sortedNodes.length - 20);
+    const ringIndex = ring === 1 ? index - 1 : ring === 2 ? index - 9 : index - 21;
+    const radius = ring === 1 ? 72 : ring === 2 ? 120 : 154;
+    const angle = (Math.PI * 2 * ringIndex / ringCount) - Math.PI / 2 + (ring % 2 ? 0 : Math.PI / ringCount);
+    positions.set(node.name, {
+      x: centerX + Math.cos(angle) * radius,
+      y: centerY + Math.sin(angle) * radius,
+      ring,
+    });
+  });
+
+  const colorFor = (name) => {
+    let hash = 0;
+    for (const char of name) hash = (hash * 31 + char.charCodeAt(0)) % 360;
+    return `hsl(${(hash + 185) % 360} 78% 68%)`;
+  };
+  const escapeSvg = (value) => escapeHtml(value).replaceAll("'", "&apos;");
+  const validEdges = edges.filter((edge) => positions.has(edge.source) && positions.has(edge.target));
+  const maxEdge = Math.max(1, ...validEdges.map((edge) => Number(edge.count || 0)));
+  const activeTag = app.tagFilter;
+
+  const edgeHtml = validEdges.map((edge) => {
+    const source = positions.get(edge.source);
+    const target = positions.get(edge.target);
+    const connected = !activeTag || edge.source === activeTag || edge.target === activeTag;
+    const widthValue = (0.8 + Number(edge.count || 0) / maxEdge * 2.8).toFixed(2);
+    return `<line class="tag-edge${connected ? "" : " dim"}" data-source="${escapeAttr(edge.source)}" data-target="${escapeAttr(edge.target)}" x1="${source.x.toFixed(1)}" y1="${source.y.toFixed(1)}" x2="${target.x.toFixed(1)}" y2="${target.y.toFixed(1)}" stroke-width="${widthValue}" />`;
   }).join("");
-  words.querySelectorAll(".tag-word").forEach((button) => {
-    button.onclick = () => {
-      const name = button.dataset.tag;
-      const bvids = cloud.tagBvids?.[name] || [];
-      app.tagFilter = name;
-      app.tagFilterBvids = new Set(bvids);
-      app.page = 1;
-      renderMetrics();
-      renderListIfNeeded(true);
-      renderTagCloud();
+
+  const nodeHtml = sortedNodes.map((node) => {
+    const position = positions.get(node.name);
+    const ratio = Number(node.count || 0) / maxCount;
+    const radius = 9 + ratio * 12 + Math.min(4, degree.get(node.name) * 0.35);
+    const selected = activeTag === node.name;
+    const fill = colorFor(node.name);
+    const labelSize = Math.max(10, Math.min(15, 10 + ratio * 5));
+    return `
+      <g class="tag-node${selected ? " active" : ""}" data-tag="${escapeAttr(node.name)}" tabindex="0" role="button" aria-label="${escapeAttr(`${node.name}，${node.count} 个视频`)}">
+        <circle cx="${position.x.toFixed(1)}" cy="${position.y.toFixed(1)}" r="${radius.toFixed(1)}" fill="${fill}" />
+        <text x="${position.x.toFixed(1)}" y="${(position.y + radius + 14).toFixed(1)}" font-size="${labelSize.toFixed(1)}">${escapeSvg(node.name)}</text>
+        <title>${escapeSvg(`${node.name} · ${node.count} 个视频 · ${degree.get(node.name)} 条关联`)}</title>
+      </g>
+    `;
+  }).join("");
+
+  container.innerHTML = `
+    <div class="tag-graph-wrap">
+      <svg class="tag-graph-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="标签关系蛛网图">
+        <defs>
+          <radialGradient id="tagGraphGlow" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stop-color="#fb7299" stop-opacity=".18"></stop>
+            <stop offset="100%" stop-color="#fb7299" stop-opacity="0"></stop>
+          </radialGradient>
+        </defs>
+        <circle cx="${centerX}" cy="${centerY}" r="105" fill="url(#tagGraphGlow)" />
+        <g class="tag-edges">${edgeHtml}</g>
+        <g class="tag-nodes">${nodeHtml}</g>
+      </svg>
+      <div class="tag-graph-legend"><span class="legend-dot"></span>节点越大，标签出现越频繁 · 线条越粗，共现越多</div>
+    </div>
+  `;
+
+  const applyTagFilter = (name) => {
+    const bvids = cloud.tagBvids?.[name] || [];
+    app.tagFilter = name;
+    app.tagFilterBvids = new Set(bvids);
+    app.page = 1;
+    renderMetrics();
+    renderListIfNeeded(true);
+    renderTagCloud();
+  };
+  container.querySelectorAll(".tag-node").forEach((node) => {
+    node.onclick = () => applyTagFilter(node.dataset.tag);
+    node.onkeydown = (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        applyTagFilter(node.dataset.tag);
+      }
+    };
+    node.onmouseenter = () => {
+      const name = node.dataset.tag;
+      container.querySelectorAll(".tag-node").forEach((item) => item.classList.toggle("dim", item !== node && !isTagConnected(name, item.dataset.tag, validEdges)));
+      container.querySelectorAll(".tag-edge").forEach((edge) => edge.classList.toggle("focus", edge.dataset.source === name || edge.dataset.target === name));
+    };
+    node.onmouseleave = () => {
+      container.querySelectorAll(".tag-node, .tag-edge").forEach((item) => item.classList.remove("dim", "focus"));
     };
   });
+}
+
+function isTagConnected(name, other, edges) {
+  return name === other || edges.some((edge) => (
+    (edge.source === name && edge.target === other) || (edge.source === other && edge.target === name)
+  ));
+}
+
+function buildTagGraphFallback(cloud) {
+  const nodes = (cloud.tags || []).slice(0, 36).map((tag) => ({
+    name: tag.name,
+    count: Number(tag.count || 0),
+  }));
+  const names = new Set(nodes.map((node) => node.name));
+  const tagBvids = cloud.tagBvids || {};
+  const edges = [];
+  for (let index = 0; index < nodes.length; index += 1) {
+    for (let next = index + 1; next < nodes.length; next += 1) {
+      const source = nodes[index].name;
+      const target = nodes[next].name;
+      const sourceVideos = new Set(tagBvids[source] || []);
+      const count = (tagBvids[target] || []).reduce(
+        (total, bvid) => total + (sourceVideos.has(bvid) ? 1 : 0),
+        0,
+      );
+      if (count > 0 && names.has(source) && names.has(target)) {
+        edges.push({ source, target, count });
+      }
+    }
+  }
+  edges.sort((a, b) => b.count - a.count);
+  return { nodes, edges: edges.slice(0, 140) };
 }
 
 function renderGuide() {
@@ -1328,7 +1467,7 @@ function bindEvents() {
           downloadedOnly: $("tagDownloadedOnly").checked,
         },
       });
-      toast(result.started ? "已开始低频读取视频标签" : "已使用本地标签缓存生成词云");
+      toast(result.started ? "已开始低频读取视频标签" : "已使用本地标签缓存生成关系图");
       await refresh();
     } catch (error) {
       toast(error.message);

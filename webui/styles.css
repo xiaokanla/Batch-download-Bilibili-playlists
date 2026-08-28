@@ -1160,43 +1160,99 @@ h3 {
   font-size: 12px;
 }
 
-.tag-cloud-words {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 7px;
-  min-height: 74px;
-  padding-top: 6px;
+.tag-cloud-graph {
+  min-height: 300px;
+  padding-top: 4px;
 }
 
-.tag-word {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 5px;
-  max-width: 100%;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+.tag-graph-wrap {
+  position: relative;
+  width: 100%;
+}
+
+.tag-graph-svg {
+  display: block;
+  width: 100%;
+  height: 300px;
+  overflow: visible;
+  border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 8px;
-  color: #dce8fa;
-  background: rgba(109, 200, 255, 0.08);
-  font-size: var(--word-size, 14px);
-  line-height: 1.2;
-  padding: 5px 7px;
+  background: rgba(10, 17, 29, 0.26);
+}
+
+.tag-graph-svg text {
+  fill: #dce8fa;
+  text-anchor: middle;
+  dominant-baseline: middle;
+  pointer-events: none;
+  font-weight: 700;
+}
+
+.tag-edge {
+  stroke: rgba(126, 211, 255, 0.36);
+  stroke-linecap: round;
+  transition: opacity 160ms ease, stroke 160ms ease, stroke-width 160ms ease;
+}
+
+.tag-edge.dim,
+.tag-node.dim {
+  opacity: 0.1;
+}
+
+.tag-edge.focus {
+  stroke: rgba(251, 114, 153, 0.9);
+  stroke-width: 3.5;
+}
+
+.tag-node {
   cursor: pointer;
-  transition: color 150ms ease, background 150ms ease, border-color 150ms ease, transform 150ms ease;
+  outline: none;
+  transition: opacity 160ms ease, transform 160ms ease;
+  transform-box: fill-box;
+  transform-origin: center;
 }
 
-.tag-word:hover,
-.tag-word.active {
-  color: #ffffff;
-  border-color: rgba(251, 114, 153, 0.64);
-  background: rgba(251, 114, 153, 0.2);
-  transform: translateY(-1px) translateZ(0);
+.tag-node circle {
+  stroke: rgba(255, 255, 255, 0.72);
+  stroke-width: 1.2;
+  filter: drop-shadow(0 3px 8px rgba(0, 0, 0, 0.28));
+  transition: stroke 160ms ease, stroke-width 160ms ease, filter 160ms ease;
 }
 
-.tag-word span {
+.tag-node:hover,
+.tag-node:focus,
+.tag-node.active {
+  transform: scale(1.08);
+}
+
+.tag-node:hover circle,
+.tag-node:focus circle,
+.tag-node.active circle {
+  stroke: #ffffff;
+  stroke-width: 2.5;
+  filter: drop-shadow(0 0 9px rgba(251, 114, 153, 0.72));
+}
+
+.tag-node.active text {
+  fill: #ffffff;
+}
+
+.tag-graph-legend {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
   color: var(--muted);
-  font-size: 10px;
-  font-weight: 800;
+  font-size: 11px;
+}
+
+.legend-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #fb7299;
+  box-shadow: 0 0 8px rgba(251, 114, 153, 0.65);
 }
 
 .download-status {
