@@ -25,6 +25,9 @@ const app = {
   contextMenuBvid: "",
   creatorCandidates: [],
   selectedCreatorMid: "",
+  creatorSearchController: null,
+  creatorSearchRequestId: 0,
+  creatorSearchRunning: false,
   tagFilter: "",
   tagFilterBvids: null,
 };
@@ -34,6 +37,7 @@ async function api(path, options = {}) {
     method: options.method || "GET",
     headers: { "Content-Type": "application/json" },
     body: options.body ? JSON.stringify(options.body) : undefined,
+    signal: options.signal,
   });
   const contentType = res.headers.get("Content-Type") || "";
   if (!contentType.includes("application/json")) {
@@ -240,7 +244,8 @@ function renderCreatorSource() {
   select.disabled = !app.creatorCandidates.length || Boolean(task.running);
   select.value = app.selectedCreatorMid;
   syncBtn.disabled = !app.selectedCreatorMid || Boolean(task.running);
-  $("creatorSearchBtn").disabled = Boolean(task.running);
+  $("creatorSearchBtn").disabled = Boolean(task.running) || app.creatorSearchRunning;
+  $("creatorSearchBtn").textContent = app.creatorSearchRunning ? "检索中..." : "查找账号";
   const source = app.state?.creatorSource || {};
   if (task.running) {
     $("creatorSyncHint").textContent = `正在低频获取投稿：${Math.round((task.progress || 0) * 100)}%`;
@@ -1138,6 +1143,11 @@ function bindEvents() {
   $("creatorSearchBtn").onclick = async () => {
     const query = $("creatorQuery").value.trim();
     if (!query) return toast("请输入账号名称、UID 或主页链接");
+    if (app.creatorSearchController) app.creatorSearchController.abort();
+    const controller = new AbortController();
+    app.creatorSearchController = controller;
+    const requestId = ++app.creatorSearchRequestId;
+    app.creatorSearchRunning = true;
     app.creatorCandidates = [];
     app.selectedCreatorMid = "";
     renderCreatorSource();
@@ -1145,7 +1155,9 @@ function bindEvents() {
       const result = await api("/api/creator/search", {
         method: "POST",
         body: { query },
+        signal: controller.signal,
       });
+      if (requestId !== app.creatorSearchRequestId) return;
       app.creatorCandidates = result.results || [];
       if (app.creatorCandidates.length === 1) {
         app.selectedCreatorMid = String(app.creatorCandidates[0].mid);
@@ -1154,8 +1166,16 @@ function bindEvents() {
       renderCreatorSource();
       renderGuide();
     } catch (error) {
+      if (error.name === "AbortError") return;
+      if (requestId !== app.creatorSearchRequestId) return;
       toast(error.message);
       renderCreatorSource();
+    } finally {
+      if (requestId === app.creatorSearchRequestId) {
+        app.creatorSearchRunning = false;
+        app.creatorSearchController = null;
+        renderCreatorSource();
+      }
     }
   };
   $("creatorResults").onchange = (event) => {

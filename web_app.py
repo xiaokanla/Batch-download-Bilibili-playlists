@@ -52,6 +52,7 @@ DOWNLOAD_RECORDS_PATH = os.path.join(USERDATA_DIR, "download_records.json")
 EAGLE_CONFIG_PATH = os.path.join(USERDATA_DIR, "eagle_config.json")
 EAGLE_INDEX_PATH = os.path.join(USERDATA_DIR, "eagle_item_index.json")
 BILI_SEARCH_CACHE_PATH = os.path.join(USERDATA_DIR, "bili_title_search_cache.json")
+BILI_CREATOR_SEARCH_CACHE_PATH = os.path.join(USERDATA_DIR, "bili_creator_search_cache.json")
 BILI_TAG_CACHE_PATH = os.path.join(USERDATA_DIR, "bili_video_tags.json")
 APP_SETTINGS_PATH = os.path.join(USERDATA_DIR, "app_settings.json")
 EAGLE_DIR = os.path.join(RESOURCE_DIR, "eagle_integration")
@@ -62,7 +63,8 @@ if EAGLE_DIR not in sys.path:
 def configure_userdata_paths(data_dir):
     """Keep all user-data files under the currently selected data directory."""
     global USERDATA_DIR, CACHE_DIR, DOWNLOAD_RECORDS_PATH
-    global EAGLE_CONFIG_PATH, EAGLE_INDEX_PATH, BILI_SEARCH_CACHE_PATH, BILI_TAG_CACHE_PATH, APP_SETTINGS_PATH
+    global EAGLE_CONFIG_PATH, EAGLE_INDEX_PATH, BILI_SEARCH_CACHE_PATH
+    global BILI_CREATOR_SEARCH_CACHE_PATH, BILI_TAG_CACHE_PATH, APP_SETTINGS_PATH
 
     USERDATA_DIR = os.path.abspath(str(data_dir or DEFAULT_USERDATA_DIR))
     CACHE_DIR = os.path.join(USERDATA_DIR, "_web_cache")
@@ -70,6 +72,7 @@ def configure_userdata_paths(data_dir):
     EAGLE_CONFIG_PATH = os.path.join(USERDATA_DIR, "eagle_config.json")
     EAGLE_INDEX_PATH = os.path.join(USERDATA_DIR, "eagle_item_index.json")
     BILI_SEARCH_CACHE_PATH = os.path.join(USERDATA_DIR, "bili_title_search_cache.json")
+    BILI_CREATOR_SEARCH_CACHE_PATH = os.path.join(USERDATA_DIR, "bili_creator_search_cache.json")
     BILI_TAG_CACHE_PATH = os.path.join(USERDATA_DIR, "bili_video_tags.json")
     APP_SETTINGS_PATH = os.path.join(USERDATA_DIR, "app_settings.json")
     os.makedirs(USERDATA_DIR, exist_ok=True)
@@ -89,6 +92,8 @@ class WebBiliApp:
         self.sync_running = False
         self.creator_sync_progress = 0
         self.creator_sync_running = False
+        self.creator_search_lock = threading.Lock()
+        self.last_creator_search_at = 0.0
         self.tag_task = {
             "running": False,
             "cancelled": False,
@@ -131,6 +136,9 @@ class WebBiliApp:
         self.apply_runtime_paths()
         self.download_records = self.load_json_file(DOWNLOAD_RECORDS_PATH, {})
         self.bili_search_cache = self.load_json_file(BILI_SEARCH_CACHE_PATH, {})
+        self.creator_search_cache = self.load_json_file(BILI_CREATOR_SEARCH_CACHE_PATH, {})
+        if not isinstance(self.creator_search_cache, dict):
+            self.creator_search_cache = {}
         self.tag_cache = self.load_json_file(BILI_TAG_CACHE_PATH, {})
         if not isinstance(self.tag_cache, dict):
             self.tag_cache = {}
@@ -210,7 +218,9 @@ class WebBiliApp:
             pass
 
     def reset_to_fresh_install(self):
-        global USERDATA_DIR, CACHE_DIR, DOWNLOAD_RECORDS_PATH, EAGLE_CONFIG_PATH, EAGLE_INDEX_PATH, BILI_SEARCH_CACHE_PATH, BILI_TAG_CACHE_PATH, APP_SETTINGS_PATH
+        global USERDATA_DIR, CACHE_DIR, DOWNLOAD_RECORDS_PATH
+        global EAGLE_CONFIG_PATH, EAGLE_INDEX_PATH, BILI_SEARCH_CACHE_PATH
+        global BILI_CREATOR_SEARCH_CACHE_PATH, BILI_TAG_CACHE_PATH, APP_SETTINGS_PATH
         with self.lock:
             if self.sync_running or self.creator_sync_running or self.tag_task.get("running") or self.download.get("running") or self.eagle_task.get("running"):
                 raise RuntimeError("请先停止正在运行的同步、词云、下载或 Eagle 任务")
@@ -224,6 +234,7 @@ class WebBiliApp:
         EAGLE_CONFIG_PATH = os.path.join(USERDATA_DIR, "eagle_config.json")
         EAGLE_INDEX_PATH = os.path.join(USERDATA_DIR, "eagle_item_index.json")
         BILI_SEARCH_CACHE_PATH = os.path.join(USERDATA_DIR, "bili_title_search_cache.json")
+        BILI_CREATOR_SEARCH_CACHE_PATH = os.path.join(USERDATA_DIR, "bili_creator_search_cache.json")
         BILI_TAG_CACHE_PATH = os.path.join(USERDATA_DIR, "bili_video_tags.json")
         APP_SETTINGS_PATH = os.path.join(USERDATA_DIR, "app_settings.json")
         manager_module.BASE_DIR = USERDATA_DIR
@@ -241,6 +252,7 @@ class WebBiliApp:
             }
             self.download_records = {}
             self.bili_search_cache = {}
+            self.creator_search_cache = {}
             self.tag_cache = {}
             self.eagle = {
                 "libraryDir": "",
@@ -341,6 +353,10 @@ class WebBiliApp:
             self.download_records = self.load_json_file(DOWNLOAD_RECORDS_PATH, {})
         if hasattr(self, "bili_search_cache"):
             self.bili_search_cache = self.load_json_file(BILI_SEARCH_CACHE_PATH, {})
+        if hasattr(self, "creator_search_cache"):
+            self.creator_search_cache = self.load_json_file(BILI_CREATOR_SEARCH_CACHE_PATH, {})
+            if not isinstance(self.creator_search_cache, dict):
+                self.creator_search_cache = {}
         if hasattr(self, "tag_cache"):
             self.tag_cache = self.load_json_file(BILI_TAG_CACHE_PATH, {})
             if not isinstance(self.tag_cache, dict):
@@ -1132,56 +1148,84 @@ class WebBiliApp:
         if len(query) > 120:
             raise RuntimeError("账号查询内容过长")
 
-        # Resolve an explicit UID locally first; account-name search is only one
-        # low-frequency request and never starts a contribution crawl by itself.
-        mid_match = re.search(r"space\.bilibili\.com/(\d+)", query, flags=re.IGNORECASE)
-        if not mid_match and re.fullmatch(r"\d{1,20}", query):
-            mid_match = re.match(r"(\d+)", query)
+        cache_key = re.sub(r"\s+", " ", query).casefold()
+        cache_ttl = 60 * 60 * 24 * 7
 
-        time.sleep(random.uniform(0.65, 1.25))
-        if mid_match:
-            mid = mid_match.group(1)
-            data = self.mgr.session.get(
-                "https://api.bilibili.com/x/web-interface/card",
-                params={"mid": mid},
-                timeout=15,
-            ).json()
-            if data.get("code") in (-412, -352, 412, 352):
-                raise RuntimeError("B 站暂时限制了账号查询，请稍后再试")
-            if data.get("code") != 0:
-                raise RuntimeError(data.get("message", "获取账号信息失败"))
-            card = (data.get("data") or {}).get("card") or {}
-            if not card:
-                raise RuntimeError("没有找到该账号")
-            results = [{
-                "mid": str(card.get("mid") or mid),
-                "name": card.get("name") or mid,
-                "face": self.normalize_url(card.get("face") or ""),
-                "fans": int(card.get("fans") or 0),
-            }]
-        else:
-            data = self.mgr.session.get(
-                "https://api.bilibili.com/x/web-interface/search/type",
-                params={"search_type": "bili_user", "keyword": query, "page": 1, "page_size": 10},
-                timeout=15,
-            ).json()
-            if data.get("code") in (-412, -352, 412, 352):
-                raise RuntimeError("B 站暂时限制了账号搜索，请稍后再试")
-            if data.get("code") != 0:
-                raise RuntimeError(data.get("message", "搜索账号失败"))
-            results = []
-            for item in (data.get("data") or {}).get("result") or []:
-                mid = str(item.get("mid") or "").strip()
-                if not mid:
-                    continue
-                results.append({
-                    "mid": mid,
-                    "name": re.sub(r"<[^>]+>", "", str(item.get("uname") or mid)),
-                    "face": self.normalize_url(item.get("upic") or item.get("face") or ""),
-                    "fans": int(item.get("fans") or 0),
-                })
-        self.log(f"账号检索完成：{len(results)} 个候选")
-        return {"results": results}
+        # Search results are safe to reuse for a short period. This prevents
+        # switching between the same account names from issuing duplicate
+        # requests and also makes the UI recover cleanly after a rate limit.
+        with self.creator_search_lock:
+            now = time.time()
+            cached = self.creator_search_cache.get(cache_key)
+            if isinstance(cached, dict) and now - float(cached.get("time") or 0) < cache_ttl:
+                results = cached.get("results")
+                if isinstance(results, list):
+                    self.log(f"账号检索命中缓存：{query} · {len(results)} 个候选")
+                    return {"results": results, "cached": True}
+
+            wait = 1.8 - (now - self.last_creator_search_at)
+            if wait > 0:
+                time.sleep(wait + random.uniform(0.1, 0.35))
+            self.last_creator_search_at = time.time()
+
+            # Resolve an explicit UID locally first; account-name search is
+            # still only one low-frequency request and never starts a crawl.
+            mid_match = re.search(r"space\.bilibili\.com/(\d+)", query, flags=re.IGNORECASE)
+            if not mid_match and re.fullmatch(r"\d{1,20}", query):
+                mid_match = re.match(r"(\d+)", query)
+
+            if mid_match:
+                mid = mid_match.group(1)
+                data = self.mgr.session.get(
+                    "https://api.bilibili.com/x/web-interface/card",
+                    params={"mid": mid},
+                    timeout=15,
+                ).json()
+                if data.get("code") in (-412, -352, 412, 352):
+                    raise RuntimeError("B 站暂时限制了账号查询，请稍后再试")
+                if data.get("code") != 0:
+                    raise RuntimeError(data.get("message", "获取账号信息失败"))
+                card = (data.get("data") or {}).get("card") or {}
+                if not card:
+                    raise RuntimeError("没有找到该账号")
+                results = [{
+                    "mid": str(card.get("mid") or mid),
+                    "name": card.get("name") or mid,
+                    "face": self.normalize_url(card.get("face") or ""),
+                    "fans": int(card.get("fans") or 0),
+                }]
+            else:
+                data = self.mgr.session.get(
+                    "https://api.bilibili.com/x/web-interface/search/type",
+                    params={"search_type": "bili_user", "keyword": query, "page": 1, "page_size": 10},
+                    timeout=15,
+                ).json()
+                if data.get("code") in (-412, -352, 412, 352):
+                    raise RuntimeError("B 站暂时限制了账号搜索，请稍后再试")
+                if data.get("code") != 0:
+                    raise RuntimeError(data.get("message", "搜索账号失败"))
+                results = []
+                for item in (data.get("data") or {}).get("result") or []:
+                    mid = str(item.get("mid") or "").strip()
+                    if not mid:
+                        continue
+                    results.append({
+                        "mid": mid,
+                        "name": re.sub(r"<[^>]+>", "", str(item.get("uname") or mid)),
+                        "face": self.normalize_url(item.get("upic") or item.get("face") or ""),
+                        "fans": int(item.get("fans") or 0),
+                    })
+
+            with self.lock:
+                self.creator_search_cache[cache_key] = {
+                    "time": time.time(),
+                    "query": query,
+                    "results": results[:20],
+                }
+                self.save_json_file(BILI_CREATOR_SEARCH_CACHE_PATH, self.creator_search_cache)
+
+            self.log(f"账号检索完成：{len(results)} 个候选")
+            return {"results": results, "cached": False}
 
     def sync_creator_videos(self, payload):
         mid = re.sub(r"\D", "", str(payload.get("mid") or ""))
