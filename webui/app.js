@@ -786,14 +786,20 @@ function renderChart() {
   }
   select.value = app.selectedYear;
   const history = historySet();
+  const totalsByMonth = new Map();
+  const doneByMonth = new Map();
+  for (const item of items) {
+    const month = item.month || "";
+    totalsByMonth.set(month, (totalsByMonth.get(month) || 0) + 1);
+    if (history.has(item.bvid)) doneByMonth.set(month, (doneByMonth.get(month) || 0) + 1);
+  }
   const data = Array.from({ length: 12 }, (_, idx) => {
     const month = `${app.selectedYear}-${String(idx + 1).padStart(2, "0")}`;
-    const monthItems = items.filter((item) => item.month === month);
     return {
       month,
       label: String(idx + 1).padStart(2, "0"),
-      total: monthItems.length,
-      done: monthItems.filter((item) => history.has(item.bvid)).length,
+      total: totalsByMonth.get(month) || 0,
+      done: doneByMonth.get(month) || 0,
     };
   });
   const maxTotal = Math.max(1, ...data.map((x) => x.total));
@@ -1036,6 +1042,9 @@ function renderDiagnostics() {
   if (btn) btn.textContent = app.diagnosticsLoading ? "检查中" : "运行";
   if (btn) btn.disabled = app.diagnosticsLoading;
   if (!app.diagnostics) return;
+  const signature = `${app.diagnosticsLoading ? "loading" : "ready"}:${JSON.stringify(app.diagnostics)}`;
+  if (list.dataset.signature === signature) return;
+  list.dataset.signature = signature;
   summary.textContent = app.diagnostics.summary || "诊断完成";
   const items = app.diagnostics.items || [];
   list.innerHTML = items.map((item) => {
@@ -1075,14 +1084,18 @@ function renderEagleFolders(selectedId = "") {
   const select = $("eagleFolder");
   if (!select) return;
   const current = selectedId || select.value || "";
-  const options = [`<option value="">导入到 Eagle 默认位置</option>`]
-    .concat((app.eagleFolders || []).map((item) => {
-      const id = escapeAttr(item.id || "");
-      const path = escapeHtml(item.path || item.name || item.id || "");
-      return `<option value="${id}">${path}</option>`;
-    }));
-  select.innerHTML = options.join("");
-  select.value = current;
+  const folderSignature = JSON.stringify((app.eagleFolders || []).map((item) => [item.id, item.path, item.name]));
+  if (select.dataset.folderSignature !== folderSignature) {
+    const options = [`<option value="">导入到 Eagle 默认位置</option>`]
+      .concat((app.eagleFolders || []).map((item) => {
+        const id = escapeAttr(item.id || "");
+        const path = escapeHtml(item.path || item.name || item.id || "");
+        return `<option value="${id}">${path}</option>`;
+      }));
+    select.innerHTML = options.join("");
+    select.dataset.folderSignature = folderSignature;
+  }
+  if (select.value !== current) select.value = current;
 }
 
 async function loadEagleFolders(libraryDir) {
@@ -1108,6 +1121,10 @@ async function loadEagleFolders(libraryDir) {
 
 function renderLogs() {
   const logs = app.state.logs || [];
+  const last = logs[logs.length - 1] || {};
+  const signature = `${logs.length}:${last.time || ""}:${last.text || ""}`;
+  if ($("logs").dataset.signature === signature) return;
+  $("logs").dataset.signature = signature;
   $("logs").innerHTML = logs.map((item) => `<div><span class="muted">[${escapeHtml(item.time)}]</span> ${escapeHtml(item.text)}</div>`).join("");
   $("logs").scrollTop = $("logs").scrollHeight;
 }

@@ -26,7 +26,6 @@ class SQLiteStore:
         connection = sqlite3.connect(str(self.path), timeout=30)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA busy_timeout = 30000")
-        connection.execute("PRAGMA journal_mode = WAL")
         connection.execute("PRAGMA synchronous = NORMAL")
         return connection
 
@@ -44,6 +43,7 @@ class SQLiteStore:
 
     def _initialize(self) -> None:
         with self.lock, self._connection() as connection:
+            connection.execute("PRAGMA journal_mode = WAL")
             connection.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS meta (
@@ -125,12 +125,25 @@ class SQLiteStore:
             if str(key).strip()
         ]
         with self.lock, self._connection() as connection:
-            connection.execute(f"DELETE FROM {table}")
+            existing = {
+                str(row[key_name])
+                for row in connection.execute(f"SELECT {key_name} FROM {table}")
+            }
+            desired = {row[0] for row in rows}
+            stale = existing - desired
+            if stale:
+                connection.executemany(
+                    f"DELETE FROM {table} WHERE {key_name} = ?",
+                    [(key,) for key in stale],
+                )
             if rows:
                 connection.executemany(
                     f"""
                     INSERT INTO {table}({key_name}, payload, updated_at)
                     VALUES(?, ?, ?)
+                    ON CONFLICT({key_name}) DO UPDATE SET
+                        payload=excluded.payload,
+                        updated_at=excluded.updated_at
                     """,
                     rows,
                 )

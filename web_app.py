@@ -346,20 +346,20 @@ class WebBiliApp:
         except Exception:
             return default
 
-    def save_json_file(self, path, data):
+    def save_json_file(self, path, data, sync_db=True):
         if hasattr(self, "db"):
             path = os.path.abspath(str(path))
-            if path == os.path.abspath(DOWNLOAD_RECORDS_PATH) and isinstance(data, dict):
+            if sync_db and path == os.path.abspath(DOWNLOAD_RECORDS_PATH) and isinstance(data, dict):
                 self.db.save_download_records(data)
-            elif path == os.path.abspath(BILI_SEARCH_CACHE_PATH) and isinstance(data, dict):
+            elif sync_db and path == os.path.abspath(BILI_SEARCH_CACHE_PATH) and isinstance(data, dict):
                 self.db.save_json_cache("title_search", data)
-            elif path == os.path.abspath(BILI_CREATOR_SEARCH_CACHE_PATH) and isinstance(data, dict):
+            elif sync_db and path == os.path.abspath(BILI_CREATOR_SEARCH_CACHE_PATH) and isinstance(data, dict):
                 self.db.save_json_cache("creator_search", data)
-            elif path == os.path.abspath(BILI_TAG_CACHE_PATH) and isinstance(data, dict):
+            elif sync_db and path == os.path.abspath(BILI_TAG_CACHE_PATH) and isinstance(data, dict):
                 self.db.save_tag_cache(data)
-            elif path == os.path.abspath(EAGLE_CONFIG_PATH) and isinstance(data, dict):
+            elif sync_db and path == os.path.abspath(EAGLE_CONFIG_PATH) and isinstance(data, dict):
                 self.db.save_single("eagle_config", data)
-            elif path == os.path.abspath(EAGLE_INDEX_PATH) and isinstance(data, dict):
+            elif sync_db and path == os.path.abspath(EAGLE_INDEX_PATH) and isinstance(data, dict):
                 self.db.save_single("eagle_index", data)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         tmp = f"{path}.tmp"
@@ -1689,7 +1689,8 @@ class WebBiliApp:
             self.download_records[bvid] = record
             self.mgr.history.add(bvid)
             self.mgr.save_data()
-            self.save_json_file(DOWNLOAD_RECORDS_PATH, self.download_records)
+            self.db.save_download_record(bvid, record)
+            self.save_json_file(DOWNLOAD_RECORDS_PATH, self.download_records, sync_db=False)
         self.cache_danmaku_xml_async(bvid)
 
     def cache_danmaku_xml_async(self, bvid):
@@ -2040,7 +2041,8 @@ class WebBiliApp:
                 return
             record["eagle"] = {**(record.get("eagle") or {}), **eagle_data}
             self.download_records[bvid] = record
-            self.save_json_file(DOWNLOAD_RECORDS_PATH, self.download_records)
+            self.db.save_download_record(bvid, record)
+            self.save_json_file(DOWNLOAD_RECORDS_PATH, self.download_records, sync_db=False)
 
     def _find_eagle_item(self, library_dir, bvid, title, source_path, timeout=10):
         from apply_contact_sheets_to_eagle import find_library_items
