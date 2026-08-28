@@ -1218,6 +1218,12 @@ h3 {
   border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 8px;
   background: rgba(10, 17, 29, 0.26);
+  cursor: grab;
+  touch-action: none;
+}
+
+.tag-graph-svg.dragging {
+  cursor: grabbing;
 }
 
 .tag-graph-svg text {

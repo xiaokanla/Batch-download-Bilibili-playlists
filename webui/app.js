@@ -17,6 +17,13 @@ const app = {
   listSignature: "",
   foldersSignature: "",
   logsSignature: "",
+  refreshing: false,
+  tagGraph: {
+    dataSignature: "",
+    zoom: 1,
+    panX: 0,
+    panY: 0,
+  },
   eagleFolders: [],
   eagleFoldersLibrary: "",
   eagleFoldersLoading: false,
@@ -354,9 +361,15 @@ function renderTagMonthOptions() {
   const select = $("tagMonth");
   const months = availableTagMonths();
   const current = select.value;
+  const signature = months.join("|");
+  if (select.dataset.signature === signature) {
+    select.classList.toggle("hidden", $("tagRange").value !== "month");
+    return;
+  }
   select.innerHTML = months.length
     ? months.map((month) => `<option value="${escapeAttr(month)}">${escapeHtml(month)}</option>`).join("")
     : `<option value="">暂无可选月份</option>`;
+  select.dataset.signature = signature;
   if (months.includes(current)) select.value = current;
   select.classList.toggle("hidden", $("tagRange").value !== "month");
 }
@@ -398,15 +411,33 @@ function renderTagCloud() {
     $("tagCloudStatus").textContent = currentItems().length ? "手动生成；标签和关联会缓存在本地。" : "请先加载视频列表。";
   }
 
+  // Keep the current graph alive while tags are being fetched. Rebuilding it
+  // on every progress poll would restart all node animations and lose pan/zoom.
+  if (running && words.querySelector(".tag-graph-svg")) return;
+
   if (!matchesCloud || !cloud.tags?.length) {
     words.innerHTML = `<div class="muted">标签会缓存到本地，生成后显示标签之间的关联。</div>`;
     return;
   }
 
-  renderTagRelationGraph(words, cloud);
+  const graphSignature = JSON.stringify({
+    source: cloud.source,
+    range: cloud.range,
+    month: cloud.month,
+    downloadedOnly: cloud.downloadedOnly,
+    updatedAt: cloud.updatedAt,
+    tags: cloud.tags,
+    graph: cloud.graph,
+    tagBvids: cloud.tagBvids,
+  });
+  if (words.dataset.graphSignature !== graphSignature) {
+    renderTagRelationGraph(words, cloud, graphSignature);
+  } else {
+    updateTagGraphHighlight(words, app.tagFilter);
+  }
 }
 
-function renderTagRelationGraph(container, cloud) {
+function renderTagRelationGraph(container, cloud, graphSignature = "") {
   const graph = cloud.graph || {};
   const fallback = buildTagGraphFallback(cloud);
   const nodes = (graph.nodes?.length ? graph.nodes : fallback.nodes).slice(0, 24);
@@ -414,6 +445,12 @@ function renderTagRelationGraph(container, cloud) {
   if (!nodes.length) {
     container.innerHTML = `<div class="muted">暂无足够的标签数据。</div>`;
     return;
+  }
+  if (app.tagGraph.dataSignature !== graphSignature) {
+    app.tagGraph.dataSignature = graphSignature;
+    app.tagGraph.zoom = 1;
+    app.tagGraph.panX = 0;
+    app.tagGraph.panY = 0;
   }
 
   const width = 560;
@@ -500,12 +537,45 @@ function renderTagRelationGraph(container, cloud) {
           </radialGradient>
         </defs>
         <circle cx="${centerX}" cy="${centerY}" r="132" fill="url(#tagGraphGlow)" />
-        <g class="tag-edges">${edgeHtml}</g>
-        <g class="tag-nodes">${nodeHtml}</g>
+        <g class="tag-graph-viewport" transform="translate(${app.tagGraph.panX} ${app.tagGraph.panY}) scale(${app.tagGraph.zoom})">
+          <g class="tag-edges">${edgeHtml}</g>
+          <g class="tag-nodes">${nodeHtml}</g>
+        </g>
       </svg>
       <div class="tag-graph-legend"><span class="legend-dot"></span>节点越大，标签出现越频繁 · 线条越粗，共现越多</div>
     </div>
   `;
+  container.dataset.graphSignature = graphSignature;
+  const svg = container.querySelector(".tag-graph-svg");
+  const viewport = container.querySelector(".tag-graph-viewport");
+  let drag = null;
+  svg.addEventListener("pointerdown", (event) => {
+    if (event.target.closest(".tag-node")) return;
+    drag = { x: event.clientX, y: event.clientY, panX: app.tagGraph.panX, panY: app.tagGraph.panY };
+    svg.classList.add("dragging");
+    svg.setPointerCapture?.(event.pointerId);
+  });
+  svg.addEventListener("pointermove", (event) => {
+    if (!drag) return;
+    const rect = svg.getBoundingClientRect();
+    const scaleX = 560 / Math.max(1, rect.width);
+    const scaleY = 560 / Math.max(1, rect.height);
+    app.tagGraph.panX = drag.panX + (event.clientX - drag.x) * scaleX;
+    app.tagGraph.panY = drag.panY + (event.clientY - drag.y) * scaleY;
+    applyTagGraphTransform(viewport);
+  });
+  const stopDrag = () => {
+    drag = null;
+    svg.classList.remove("dragging");
+  };
+  svg.addEventListener("pointerup", stopDrag);
+  svg.addEventListener("pointercancel", stopDrag);
+  svg.addEventListener("wheel", (event) => {
+    event.preventDefault();
+    const direction = event.deltaY < 0 ? 1 : -1;
+    app.tagGraph.zoom = clampNumber(app.tagGraph.zoom + direction * 0.12, 0.65, 2.5);
+    applyTagGraphTransform(viewport);
+  }, { passive: false });
 
   const applyTagFilter = (name) => {
     const bvids = cloud.tagBvids?.[name] || [];
@@ -532,6 +602,27 @@ function renderTagRelationGraph(container, cloud) {
     node.onmouseleave = () => {
       container.querySelectorAll(".tag-node, .tag-edge").forEach((item) => item.classList.remove("dim", "focus"));
     };
+  });
+  updateTagGraphHighlight(container, app.tagFilter);
+}
+
+function applyTagGraphTransform(viewport) {
+  if (!viewport) return;
+  viewport.setAttribute(
+    "transform",
+    `translate(${app.tagGraph.panX.toFixed(2)} ${app.tagGraph.panY.toFixed(2)}) scale(${app.tagGraph.zoom.toFixed(3)})`,
+  );
+}
+
+function updateTagGraphHighlight(container, activeTag) {
+  const edges = [...container.querySelectorAll(".tag-edge")];
+  container.querySelectorAll(".tag-node").forEach((node) => {
+    node.classList.toggle("active", Boolean(activeTag) && node.dataset.tag === activeTag);
+    node.classList.toggle("dim", Boolean(activeTag) && node.dataset.tag !== activeTag && !isTagConnected(activeTag, node.dataset.tag, edges));
+  });
+  edges.forEach((edge) => {
+    const connected = !activeTag || edge.dataset.source === activeTag || edge.dataset.target === activeTag;
+    edge.classList.toggle("dim", !connected);
   });
 }
 
@@ -678,8 +769,12 @@ function renderChart() {
   const items = app.mode === "creator" ? (app.state.creatorVideos || []) : (app.state.favVideos || []);
   $("chartTitle").textContent = app.mode === "creator" ? "投稿月份分布" : "月份分布";
   if (!items.length) {
-    select.innerHTML = "";
-    chart.innerHTML = `<div class="empty">暂无当前数据</div>`;
+    if (chart.dataset.dataSignature !== "empty") {
+      select.innerHTML = "";
+      select.dataset.signature = "";
+      chart.innerHTML = `<div class="empty">暂无当前数据</div>`;
+      chart.dataset.dataSignature = "empty";
+    }
     return;
   }
   const years = [...new Set(items.map((x) => x.year).filter(Boolean))].sort().reverse();
@@ -702,31 +797,38 @@ function renderChart() {
     };
   });
   const maxTotal = Math.max(1, ...data.map((x) => x.total));
-  chart.innerHTML = data.map((x) => {
-    const totalH = Math.max(3, Math.round((x.total / maxTotal) * 100));
-    const doneH = x.total ? Math.round((x.done / maxTotal) * 100) : 0;
-    const tip = `${x.month}: ${x.done}/${x.total}`;
-    return `
-      <div class="month-bar ${app.monthFilter === x.month ? "active" : ""}" data-month="${escapeAttr(x.month)}" title="${escapeAttr(tip)}">
-        <span class="month-count">${x.total ? `${x.done}/${x.total}` : "0"}</span>
-        <div class="bar-track">
-          <span class="bar-total" style="height:${totalH}%"></span>
-          <span class="bar-done" style="height:${doneH}%"></span>
+  const dataSignature = JSON.stringify({ mode: app.mode, year: app.selectedYear, data });
+  if (chart.dataset.dataSignature !== dataSignature) {
+    chart.dataset.dataSignature = dataSignature;
+    chart.innerHTML = data.map((x) => {
+      const totalH = Math.max(3, Math.round((x.total / maxTotal) * 100));
+      const doneH = x.total ? Math.round((x.done / maxTotal) * 100) : 0;
+      const tip = `${x.month}: ${x.done}/${x.total}`;
+      return `
+        <div class="month-bar" data-month="${escapeAttr(x.month)}" title="${escapeAttr(tip)}">
+          <span class="month-count">${x.total ? `${x.done}/${x.total}` : "0"}</span>
+          <div class="bar-track">
+            <span class="bar-total" style="height:${totalH}%"></span>
+            <span class="bar-done" style="height:${doneH}%"></span>
+          </div>
+          <span class="month-label">${x.label}</span>
         </div>
-        <span class="month-label">${x.label}</span>
-      </div>
-    `;
-  }).join("");
+      `;
+    }).join("");
+    chart.querySelectorAll(".month-bar").forEach((bar) => {
+      bar.onclick = () => {
+        if (app.mode === "manual") return;
+        const month = bar.dataset.month;
+        app.monthFilter = app.monthFilter === month ? "" : month;
+        app.page = 1;
+        renderMetrics();
+        renderChart();
+        renderListIfNeeded(true);
+      };
+    });
+  }
   chart.querySelectorAll(".month-bar").forEach((bar) => {
-    bar.onclick = () => {
-      if (app.mode === "manual") return;
-      const month = bar.dataset.month;
-      app.monthFilter = app.monthFilter === month ? "" : month;
-      app.page = 1;
-      renderMetrics();
-      renderChart();
-      renderListIfNeeded(true);
-    };
+    bar.classList.toggle("active", app.monthFilter === bar.dataset.month);
   });
 }
 
@@ -745,16 +847,35 @@ function renderListIfNeeded(force = false) {
     monthFilter: app.monthFilter,
     search: app.search,
     tagFilter: app.tagFilter,
-    selected: [...app.selected].sort(),
-    history: [...historySet()].sort(),
     items: pageItems.map((x) => [x.bvid, x.title, x.cover, x.month, x.duration]),
   });
-  if (!force && signature === app.listSignature) {
+  if (signature === app.listSignature) {
     $("pageInfo").textContent = `Page ${app.page} / ${totalPages}`;
+    updateListVisualState(pageItems);
     return;
   }
   app.listSignature = signature;
   renderList(pageItems, totalPages);
+}
+
+function updateListVisualState(pageItems = []) {
+  const history = historySet();
+  const byBvid = new Map(pageItems.map((item) => [item.bvid, item]));
+  $("videoList").querySelectorAll(".video-card").forEach((card) => {
+    const item = byBvid.get(card.dataset.bvid);
+    if (!item) return;
+    const done = history.has(item.bvid);
+    const selected = app.selected.has(item.bvid);
+    card.classList.toggle("done", done);
+    card.classList.toggle("selected", selected);
+    const checkbox = card.querySelector(".check");
+    if (checkbox) checkbox.checked = selected;
+    const badge = card.querySelector(".badge");
+    if (badge) {
+      badge.classList.toggle("done", done);
+      badge.textContent = done ? "已下" : "未下";
+    }
+  });
 }
 
 function renderList(pageItems, totalPages) {
@@ -806,6 +927,7 @@ function renderList(pageItems, totalPages) {
     img.addEventListener("load", () => img.classList.add("loaded"));
     if (img.complete) img.classList.add("loaded");
   });
+  updateListVisualState(pageItems);
 }
 
 function videoPageUrl(bvid) {
@@ -994,7 +1116,7 @@ function toggleSelect(bvid) {
   if (app.selected.has(bvid)) app.selected.delete(bvid);
   else app.selected.add(bvid);
   renderMetrics();
-  renderListIfNeeded(true);
+  updateListVisualState();
 }
 
 function selectedArray() {
@@ -1002,11 +1124,15 @@ function selectedArray() {
 }
 
 async function refresh() {
+  if (app.refreshing) return;
+  app.refreshing = true;
   try {
     app.state = await api("/api/state");
     renderState();
   } catch (error) {
     console.error(error);
+  } finally {
+    app.refreshing = false;
   }
 }
 
