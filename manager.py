@@ -6,6 +6,7 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from config import BASE_DIR, HISTORY_FILE, COOKIE_FILE, NETSCAPE_TEMP, LAST_LOGIN_COOKIE, BACKUP_FILENAMES
+from database import SQLiteStore
 
 class BiliManager:
     def __init__(self):
@@ -19,6 +20,7 @@ class BiliManager:
             'Referer': 'https://www.bilibili.com/',
         })
         self.uid = "guest"
+        self.store = SQLiteStore(BASE_DIR)
         self.init_paths()
         self.history = set()
         self.load_root_cookie_and_identify()
@@ -30,12 +32,7 @@ class BiliManager:
         self.cookie_file_path = os.path.join(self.user_dir, COOKIE_FILE)
 
     def load_data(self):
-        if os.path.exists(self.history_file_path):
-            try:
-                with open(self.history_file_path, 'r', encoding='utf-8') as f:
-                    self.history = set(json.load(f))
-            except: self.history = set()
-        else: self.history = set()
+        self.history = self.store.load_history(self.uid, self.history_file_path)
 
         if os.path.exists(self.cookie_file_path):
             try:
@@ -45,8 +42,9 @@ class BiliManager:
             except: pass
 
     def save_data(self):
+        self.store.save_history(self.uid, self.history)
         with open(self.history_file_path, 'w', encoding='utf-8') as f:
-            json.dump(list(self.history), f)
+            json.dump(sorted(self.history), f, ensure_ascii=False)
         with open(self.cookie_file_path, 'w', encoding='utf-8') as f:
             json.dump(self.session.cookies.get_dict(), f)
 

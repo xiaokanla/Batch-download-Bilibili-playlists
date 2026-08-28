@@ -8,6 +8,9 @@ bili_netscape_temp.txt
 error_log.txt
 *.json
 *.txt
+*.db
+*.db-wal
+*.db-shm
 !requirements.txt
 !README.md
 

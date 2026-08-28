@@ -5,6 +5,7 @@
 ```text
 BiliDownloader_0705/
   web_app.py                  # 本地 Web API 服务
+  database.py                # SQLite 主数据存储和旧 JSON 迁移
   worker.py                   # 下载任务 worker
   manager.py                  # 登录、Cookie、历史记录管理
   utils.py                    # B 站解析工具
@@ -38,7 +39,25 @@ BiliDownloader_0705/
 
 `dataDir` 是启动级配置。程序启动时会先读取默认 `userdata/app_settings.json`，如果其中设置了 `dataDir`，后续缓存、下载记录和用户历史会优先使用该目录。修改 `dataDir` 后需要重启。
 
-程序会把 `download_records.json`、`history.json`、收藏夹缓存、Eagle 索引、搜索缓存和 `bili_video_tags.json` 标签缓存统一放在当前 `dataDir`。切换自定义数据目录时，相关路径也会同步更新；不要在代码中单独拼接默认 `userdata` 路径。
+程序会把 `bili_downloader.db` 和兼容用的 `download_records.json`、`history.json`、
+收藏夹缓存、Eagle 索引、搜索缓存及 `bili_video_tags.json` 标签缓存统一放在当前
+`dataDir`。SQLite 是主存储，JSON 是兼容镜像；切换自定义数据目录时，数据库和相关路径
+会同步更新，不要在代码中单独拼接默认 `userdata` 路径。
+
+### SQLite 数据表
+
+`database.py` 只使用 Python 标准库 `sqlite3`，不增加第三方依赖。数据库启用 WAL、
+`busy_timeout` 和事务写入，主要表包括：
+
+- `download_records`：按 BV 保存标题、路径、下载时间和 Eagle 状态。
+- `history`：按用户 UID 保存已下载 BV，避免不同账号之间互相污染。
+- `fav_cache`：收藏夹分页结果缓存。
+- `tag_cache`：视频标签缓存。
+- `json_cache`：标题搜索、账号搜索等可迁移缓存。
+- `meta`：数据库版本、Eagle 配置和索引等单值配置。
+
+启动时如果 SQLite 对应表为空，会按需从旧 JSON 迁移；旧 JSON 不删除。保存时会先更新
+SQLite，再写 JSON 镜像，以兼容旧版程序和 Eagle 独立脚本。
 
 ## 3. Web API
 
@@ -63,14 +82,14 @@ BiliDownloader_0705/
 3. 创建 `DownloadWorker`。
 4. `worker.py` 使用 yt-dlp 下载视频。
 5. 如果使用外部 Aria2 失败，会自动禁用 Aria2 并回退。
-6. 下载成功后调用 `record_download`，写入 `download_records.json` 和历史记录。
+6. 下载成功后调用 `record_download`，写入 SQLite 下载记录和历史表，同时更新 JSON 镜像。
 7. 异步缓存弹幕 XML，供后续套图抽帧使用。
 
 ## 5. Eagle 套图流程
 
 ### 已下载视频导入 Eagle
 
-1. 从 `download_records.json` 找到本地视频。
+1. 从 SQLite 下载记录（兼容读取 `download_records.json`）找到本地视频。
 2. 用 `import_videos_to_eagle.generate_contact_sheet` 生成套图。
 3. 调 Eagle 本地 API 导入视频。
 4. 写入 Eagle metadata，自定义缩略图。
@@ -82,7 +101,7 @@ BiliDownloader_0705/
 2. 默认跳过 `customThumbnail=true` 的项目。
 3. 尝试匹配 BV：
    - Eagle metadata 中的 BV、URL、标签、备注。
-   - `download_records.json`。
+   - SQLite 下载记录和兼容镜像 `download_records.json`。
    - `userdata/_web_cache/fav_*.json`。
    - `eagle_integration/exports/*manifest.json`。
    - 必要时低频标题搜索。
@@ -113,6 +132,7 @@ BiliDownloader_0705/
 提交前确认 `.gitignore` 排除：
 
 - `userdata/`
+- `bili_downloader.db`、`*.db-wal`、`*.db-shm`
 - `last_login_cookie.json`
 - `bili_netscape_temp.txt`
 - `error_log.txt`
@@ -123,7 +143,7 @@ BiliDownloader_0705/
 ## 9. 验证命令
 
 ```bash
-python -m py_compile web_app.py worker.py
+python -m py_compile database.py manager.py web_app.py worker.py
 python -m py_compile eagle_integration/*.py
 node --check webui/app.js
 ```

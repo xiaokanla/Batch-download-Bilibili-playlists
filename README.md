@@ -2,16 +2,13 @@
 
 BiliDownloader Studio 是一个面向 B 站收藏夹批量下载、历史去重、Eagle 视频导入和视频套图封面生成的本地 Web 工具。
 
-> 当前源码版本：`v1.3.0-tag-cloud`
+> 当前源码版本：`v1.4.0-sqlite`
 
 ## 下载
 
 普通用户建议直接下载 Release 里的正式版压缩包，解压后运行 `BiliDownloaderStudio.exe`，不需要配置 Python 环境。
 
-最新正式包：
-
-- `BiliDownloaderStudio_Release_1.3.0_TagCloud_20260827.zip`
-- 校验值请下载同一 Release 中的 `SHA256SUMS.txt`。
+最新正式包请以 GitHub Release 页面为准；校验值请下载同一 Release 中的 `SHA256SUMS.txt`。
 
 ## 主要功能
 
@@ -37,6 +34,10 @@ BiliDownloader Studio 是一个面向 B 站收藏夹批量下载、历史去重�
 3. 双击 `BiliDownloaderStudio.exe`。
 4. 程序会自动打开本地网页界面。
 5. 按界面里的新手引导完成登录、同步、下载或 Eagle 导入。
+
+程序首次启动会在数据目录中创建 `bili_downloader.db`。旧版本的 JSON
+记录会自动迁移，原 JSON 文件不会删除；迁移完成后程序以 SQLite 为主存储，
+同时继续更新 JSON 镜像，方便旧版工具和独立 Eagle 脚本继续使用。
 
 ### 从源码运行
 
@@ -97,6 +98,12 @@ http://127.0.0.1:8765
 - 移除账号投稿区的独立关键词输入，统一使用顶部搜索栏筛选已获取的投稿列表。
 - 新增标签关系蛛网图：支持近 3/6/12 个月、指定月份和“仅已下载”分析，节点表示标签，连线表示标签共现关系。
 - 点击关系图节点可直接筛选当前视频列表；标签读取手动触发、低频串行并持久化缓存。
+
+### v1.4.0-sqlite
+
+- 新增 SQLite 主数据存储，统一保存下载记录、历史、收藏夹缓存、搜索缓存、标签缓存和 Eagle 配置。
+- 首次运行自动迁移旧 JSON，保留 JSON 镜像和原有导入/导出功能，换设备时可直接迁移数据目录或历史记录包。
+- 使用 WAL、事务和索引降低大规模记录读取时的等待，减少每次操作反复解析完整 JSON 的开销。
 
 ### v1.2.9-creator-source
 

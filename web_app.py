@@ -22,6 +22,7 @@ import requests
 from PIL import Image
 
 import manager as manager_module
+from database import SQLiteStore
 from manager import BiliManager
 from utils import BiliResolver, WbiSigner
 from worker import DownloadWorker
@@ -32,7 +33,7 @@ APP_DIR = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else 
 WEB_DIR = os.path.join(RESOURCE_DIR, "webui")
 DEFAULT_USERDATA_DIR = os.path.join(APP_DIR, "userdata")
 BOOTSTRAP_SETTINGS_PATH = os.path.join(DEFAULT_USERDATA_DIR, "app_settings.json")
-APP_VERSION = "1.3.0-tag-cloud"
+APP_VERSION = "1.4.0-sqlite"
 APP_FLAVOR = "release"
 
 
@@ -129,6 +130,7 @@ class WebBiliApp:
         self.settings.update(self.load_json_file(APP_SETTINGS_PATH, {}))
         self.settings["dataDir"] = self.settings.get("dataDir") or USERDATA_DIR
         configure_userdata_paths(self.settings["dataDir"])
+        self.db = SQLiteStore(USERDATA_DIR)
         manager_module.BASE_DIR = USERDATA_DIR
         manager_module.NETSCAPE_TEMP = os.path.join(APP_DIR, "bili_netscape_temp.txt")
         manager_module.LAST_LOGIN_COOKIE = os.path.join(APP_DIR, "last_login_cookie.json")
@@ -321,6 +323,20 @@ class WebBiliApp:
         return {"ok": True, "message": "已恢复到初始状态。请刷新页面并重新登录。"}
 
     def load_json_file(self, path, default):
+        if hasattr(self, "db"):
+            path = os.path.abspath(str(path))
+            if path == os.path.abspath(DOWNLOAD_RECORDS_PATH) and isinstance(default, dict):
+                return self.db.load_download_records(path)
+            if path == os.path.abspath(BILI_SEARCH_CACHE_PATH) and isinstance(default, dict):
+                return self.db.load_json_cache("title_search", path)
+            if path == os.path.abspath(BILI_CREATOR_SEARCH_CACHE_PATH) and isinstance(default, dict):
+                return self.db.load_json_cache("creator_search", path)
+            if path == os.path.abspath(BILI_TAG_CACHE_PATH) and isinstance(default, dict):
+                return self.db.load_tag_cache(path)
+            if path == os.path.abspath(EAGLE_CONFIG_PATH) and isinstance(default, dict):
+                return self.db.load_single("eagle_config", path, {})
+            if path == os.path.abspath(EAGLE_INDEX_PATH) and isinstance(default, dict):
+                return self.db.load_single("eagle_index", path, {})
         if not os.path.exists(path):
             return default
         try:
@@ -331,6 +347,20 @@ class WebBiliApp:
             return default
 
     def save_json_file(self, path, data):
+        if hasattr(self, "db"):
+            path = os.path.abspath(str(path))
+            if path == os.path.abspath(DOWNLOAD_RECORDS_PATH) and isinstance(data, dict):
+                self.db.save_download_records(data)
+            elif path == os.path.abspath(BILI_SEARCH_CACHE_PATH) and isinstance(data, dict):
+                self.db.save_json_cache("title_search", data)
+            elif path == os.path.abspath(BILI_CREATOR_SEARCH_CACHE_PATH) and isinstance(data, dict):
+                self.db.save_json_cache("creator_search", data)
+            elif path == os.path.abspath(BILI_TAG_CACHE_PATH) and isinstance(data, dict):
+                self.db.save_tag_cache(data)
+            elif path == os.path.abspath(EAGLE_CONFIG_PATH) and isinstance(data, dict):
+                self.db.save_single("eagle_config", data)
+            elif path == os.path.abspath(EAGLE_INDEX_PATH) and isinstance(data, dict):
+                self.db.save_single("eagle_index", data)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         tmp = f"{path}.tmp"
         with open(tmp, "w", encoding="utf-8") as f:
@@ -345,8 +375,10 @@ class WebBiliApp:
 
     def apply_runtime_paths(self):
         configure_userdata_paths(self.settings.get("dataDir") or DEFAULT_USERDATA_DIR)
+        self.db = SQLiteStore(USERDATA_DIR)
         manager_module.BASE_DIR = USERDATA_DIR
         if hasattr(self, "mgr"):
+            self.mgr.store = SQLiteStore(USERDATA_DIR)
             self.mgr.init_paths()
             self.mgr.load_data()
         if hasattr(self, "download_records"):
@@ -415,6 +447,8 @@ class WebBiliApp:
 
     def load_fav_cache(self, fid):
         path = self.cache_path(fid)
+        if hasattr(self, "db"):
+            return self.db.load_fav_cache(fid, path)
         if not os.path.exists(path):
             return []
         try:
@@ -426,6 +460,8 @@ class WebBiliApp:
 
     def save_fav_cache(self, fid, videos):
         try:
+            if hasattr(self, "db"):
+                self.db.save_fav_cache(fid, videos)
             with open(self.cache_path(fid), "w", encoding="utf-8") as f:
                 json.dump(videos, f, ensure_ascii=False)
         except Exception as exc:
