@@ -1184,6 +1184,13 @@ h3 {
   overflow: hidden;
 }
 
+.panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
 .tag-cloud-controls {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -1200,26 +1207,64 @@ h3 {
 }
 
 .tag-cloud-graph {
-  min-height: 300px;
+  width: 100%;
+  height: min(520px, 48vh);
+  min-width: 260px;
+  min-height: 320px;
+  max-width: 100%;
+  max-height: 720px;
   padding-top: 4px;
+  overflow: hidden;
+  resize: both;
+  scrollbar-width: thin;
+}
+
+.tag-cloud-graph:focus-within {
+  outline: 1px solid rgba(109, 200, 255, 0.32);
+  outline-offset: -1px;
+}
+
+.tag-cloud-graph::-webkit-resizer {
+  background:
+    linear-gradient(135deg, transparent 0 42%, rgba(178, 189, 208, 0.7) 43% 49%, transparent 50% 62%, rgba(178, 189, 208, 0.7) 63% 69%, transparent 70%);
 }
 
 .tag-graph-wrap {
   position: relative;
+  display: flex;
+  flex-direction: column;
   width: 100%;
+  height: 100%;
+  min-height: 0;
 }
 
 .tag-graph-svg {
   display: block;
+  flex: 1 1 auto;
   width: 100%;
-  height: auto;
-  aspect-ratio: 1 / 1;
-  overflow: visible;
+  height: 100%;
+  min-height: 0;
+  aspect-ratio: auto;
+  overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 8px;
   background: rgba(10, 17, 29, 0.26);
   cursor: grab;
   touch-action: none;
+}
+
+.tag-graph-legend {
+  flex: 0 0 auto;
+  min-height: 22px;
+}
+
+/*
+ * The graph is intentionally clipped to its own canvas. Zooming and panning
+ * must never cover the controls above it or the panels below it.
+ */
+.tag-graph-wrap,
+.tag-graph-svg {
+  contain: paint;
 }
 
 .tag-graph-svg.dragging {
@@ -1306,8 +1351,11 @@ h3 {
   align-items: center;
   gap: 6px;
   margin-top: 8px;
+  overflow: hidden;
   color: var(--muted);
   font-size: 11px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .legend-dot {

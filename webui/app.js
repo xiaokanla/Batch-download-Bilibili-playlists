@@ -43,6 +43,47 @@ function clampNumber(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
+function clampTagGraphPan() {
+  const size = 560;
+  const zoom = clampNumber(Number(app.tagGraph.zoom) || 1, 0.65, 2.5);
+  app.tagGraph.zoom = zoom;
+  if (zoom <= 1) {
+    const offset = (size - size * zoom) / 2;
+    app.tagGraph.panX = offset;
+    app.tagGraph.panY = offset;
+    return;
+  }
+  const minPan = size - size * zoom;
+  app.tagGraph.panX = clampNumber(Number(app.tagGraph.panX) || 0, minPan, 0);
+  app.tagGraph.panY = clampNumber(Number(app.tagGraph.panY) || 0, minPan, 0);
+}
+
+function initTagGraphCanvas() {
+  const canvas = $("tagCloudWords");
+  if (!canvas) return;
+  const savedWidth = Number(localStorage.getItem("bili-tag-graph-width"));
+  const savedHeight = Number(localStorage.getItem("bili-tag-graph-height"));
+  if (Number.isFinite(savedWidth) && savedWidth >= 260) canvas.style.width = `${Math.round(savedWidth)}px`;
+  if (Number.isFinite(savedHeight) && savedHeight >= 320) canvas.style.height = `${Math.round(savedHeight)}px`;
+
+  const rememberSize = () => {
+    const rect = canvas.getBoundingClientRect();
+    const parentWidth = canvas.parentElement?.getBoundingClientRect().width || rect.width;
+    if (rect.width > parentWidth + 1) {
+      canvas.style.width = `${Math.max(260, Math.floor(parentWidth))}px`;
+    }
+    localStorage.setItem("bili-tag-graph-width", String(Math.round(canvas.getBoundingClientRect().width)));
+    localStorage.setItem("bili-tag-graph-height", String(Math.round(canvas.getBoundingClientRect().height)));
+  };
+  if (typeof ResizeObserver !== "undefined") {
+    const observer = new ResizeObserver(rememberSize);
+    observer.observe(canvas);
+    if (canvas.parentElement) observer.observe(canvas.parentElement);
+  }
+  window.addEventListener("resize", rememberSize);
+  rememberSize();
+}
+
 function initResizableLayout() {
   const shell = document.querySelector(".shell");
   const railResizer = $("railResizer");
@@ -452,6 +493,7 @@ function renderTagRelationGraph(container, cloud, graphSignature = "") {
     app.tagGraph.panX = 0;
     app.tagGraph.panY = 0;
   }
+  clampTagGraphPan();
 
   const width = 560;
   const height = 560;
@@ -562,6 +604,7 @@ function renderTagRelationGraph(container, cloud, graphSignature = "") {
     const scaleY = 560 / Math.max(1, rect.height);
     app.tagGraph.panX = drag.panX + (event.clientX - drag.x) * scaleX;
     app.tagGraph.panY = drag.panY + (event.clientY - drag.y) * scaleY;
+    clampTagGraphPan();
     applyTagGraphTransform(viewport);
   });
   const stopDrag = () => {
@@ -574,6 +617,7 @@ function renderTagRelationGraph(container, cloud, graphSignature = "") {
     event.preventDefault();
     const direction = event.deltaY < 0 ? 1 : -1;
     app.tagGraph.zoom = clampNumber(app.tagGraph.zoom + direction * 0.12, 0.65, 2.5);
+    clampTagGraphPan();
     applyTagGraphTransform(viewport);
   }, { passive: false });
 
@@ -1711,6 +1755,15 @@ function bindEvents() {
     renderListIfNeeded(true);
     renderTagCloud();
   };
+  $("resetTagGraphSizeBtn").onclick = () => {
+    const canvas = $("tagCloudWords");
+    if (!canvas) return;
+    canvas.style.width = "";
+    canvas.style.height = "";
+    localStorage.removeItem("bili-tag-graph-width");
+    localStorage.removeItem("bili-tag-graph-height");
+    toast("关系图已恢复默认尺寸");
+  };
   $("openHistoryLocationBtn").onclick = async () => {
     try {
       const result = await api("/api/history/open-location", { method: "POST", body: {} });
@@ -1957,6 +2010,7 @@ function bindEvents() {
 }
 
 initResizableLayout();
+initTagGraphCanvas();
 bindEvents();
 refresh();
 setInterval(refresh, 1400);
