@@ -15,6 +15,7 @@ from pathlib import Path
 import requests
 
 from apply_contact_sheets_to_eagle import apply_match, find_library_items
+from eagle_tags import api_for_library, append_bili_tags_to_item, clean_tags, ensure_bili_tag_group
 from export_to_eagle import EAGLE_API, VideoItem, eagle_available, normalize_url
 from import_videos_to_eagle import generate_contact_sheet
 from one_click_eagle_thumbnail import load_library_folders
@@ -214,6 +215,7 @@ def process_record(
     source = Path(str(record.get("path") or ""))
     bvid = str(record.get("bvid") or "")
     title = str(record.get("title") or bvid)
+    bili_tags = clean_tags(record.get("biliTags") or [])
     video = VideoItem(
         title=title,
         bvid=bvid,
@@ -237,13 +239,14 @@ def process_record(
     if eagle_data.get("itemId"):
         item = find_eagle_item(library, bvid, title, str(source), str(eagle_data.get("itemId")))
     if import_to_eagle and item is None:
+        import_tags = ["Bilibili", "video", bvid, *bili_tags]
         payload = {
             "items": [{
                 "path": str(source),
                 "name": title,
                 "website": video.website,
                 "annotation": f"BV: {bvid}\nSource video: {source}\nContact sheet: {sheet}",
-                "tags": ["Bilibili", "video", bvid],
+                "tags": clean_tags(import_tags),
                 "folderId": folder_id,
             }]
         }
@@ -254,6 +257,10 @@ def process_record(
     if item:
         ensure_folder(item, library, folder_id)
         apply_match({"entry": {"bvid": bvid}, "item": item, "contact_sheet": sheet}, library, _dt.datetime.now().strftime("%Y%m%d_%H%M%S"))
+        if bili_tags:
+            eagle_api = api_for_library(library, EAGLE_API)
+            ensure_bili_tag_group(library, bili_tags, api_base=eagle_api)
+            append_bili_tags_to_item(item, library, bili_tags, api_base=eagle_api)
         record["eagle"] = {
             **eagle_data,
             "imported": True,
@@ -261,6 +268,8 @@ def process_record(
             "library": str(library),
             "folderId": folder_id,
             "contactSheet": str(sheet),
+            "biliTags": bili_tags,
+            "biliTagGroup": "BiliDownloader 标签" if bili_tags else "",
             "importedAt": _dt.datetime.now().isoformat(timespec="seconds"),
             "error": "",
         }

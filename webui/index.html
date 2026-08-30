@@ -240,6 +240,7 @@
             <button id="refreshEagleIndexBtn" class="btn ghost full">刷新 Eagle 库索引</button>
             <label class="toggle"><input id="deleteAfterEagle" type="checkbox" checked /> 导入成功后删除本地视频</label>
             <label class="toggle"><input id="useDanmakuEagle" type="checkbox" checked /> 根据弹幕峰值优化抽帧</label>
+            <label class="toggle"><input id="syncBiliTagsEagle" type="checkbox" checked /> 导入时同步 B 站标签</label>
             <select id="eagleSpeedMode" class="select eagle-folder-select">
               <option value="快速">快速</option>
               <option value="平衡" selected>平衡</option>
@@ -248,6 +249,8 @@
             <label class="toggle"><input id="forceEagleRebuild" type="checkbox" /> 强制重新生成已有封面</label>
           </details>
           <button id="eagleImportBtn" class="btn primary full">导入已下载视频到 Eagle</button>
+          <button id="eagleTagSyncBtn" class="btn ghost full">只给历史 Eagle 视频同步标签</button>
+          <div class="section-note compact-note">这个功能不需要本地视频，也不会重新导入或生成封面；请先让 Eagle 打开当前选中的库。</div>
           <button id="eagleFolderThumbBtn" class="btn ghost full">修复选中文件夹封面</button>
           <div class="action-row">
             <button id="eaglePauseBtn" class="btn ghost">暂停</button>

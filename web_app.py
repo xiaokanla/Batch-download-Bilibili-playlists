@@ -4,6 +4,7 @@ import io
 import json
 import math
 import os
+import queue
 import random
 import re
 import shutil
@@ -33,7 +34,7 @@ APP_DIR = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else 
 WEB_DIR = os.path.join(RESOURCE_DIR, "webui")
 DEFAULT_USERDATA_DIR = os.path.join(APP_DIR, "userdata")
 BOOTSTRAP_SETTINGS_PATH = os.path.join(DEFAULT_USERDATA_DIR, "app_settings.json")
-APP_VERSION = "1.4.0-sqlite"
+APP_VERSION = "1.4.3-eagle-tag-repair"
 APP_FLAVOR = "release"
 
 
@@ -55,6 +56,7 @@ EAGLE_INDEX_PATH = os.path.join(USERDATA_DIR, "eagle_item_index.json")
 BILI_SEARCH_CACHE_PATH = os.path.join(USERDATA_DIR, "bili_title_search_cache.json")
 BILI_CREATOR_SEARCH_CACHE_PATH = os.path.join(USERDATA_DIR, "bili_creator_search_cache.json")
 BILI_TAG_CACHE_PATH = os.path.join(USERDATA_DIR, "bili_video_tags.json")
+VIDEO_TAG_DIR = os.path.join(USERDATA_DIR, "video_tags")
 APP_SETTINGS_PATH = os.path.join(USERDATA_DIR, "app_settings.json")
 EAGLE_DIR = os.path.join(RESOURCE_DIR, "eagle_integration")
 if EAGLE_DIR not in sys.path:
@@ -65,7 +67,7 @@ def configure_userdata_paths(data_dir):
     """Keep all user-data files under the currently selected data directory."""
     global USERDATA_DIR, CACHE_DIR, DOWNLOAD_RECORDS_PATH
     global EAGLE_CONFIG_PATH, EAGLE_INDEX_PATH, BILI_SEARCH_CACHE_PATH
-    global BILI_CREATOR_SEARCH_CACHE_PATH, BILI_TAG_CACHE_PATH, APP_SETTINGS_PATH
+    global BILI_CREATOR_SEARCH_CACHE_PATH, BILI_TAG_CACHE_PATH, VIDEO_TAG_DIR, APP_SETTINGS_PATH
 
     USERDATA_DIR = os.path.abspath(str(data_dir or DEFAULT_USERDATA_DIR))
     CACHE_DIR = os.path.join(USERDATA_DIR, "_web_cache")
@@ -75,6 +77,7 @@ def configure_userdata_paths(data_dir):
     BILI_SEARCH_CACHE_PATH = os.path.join(USERDATA_DIR, "bili_title_search_cache.json")
     BILI_CREATOR_SEARCH_CACHE_PATH = os.path.join(USERDATA_DIR, "bili_creator_search_cache.json")
     BILI_TAG_CACHE_PATH = os.path.join(USERDATA_DIR, "bili_video_tags.json")
+    VIDEO_TAG_DIR = os.path.join(USERDATA_DIR, "video_tags")
     APP_SETTINGS_PATH = os.path.join(USERDATA_DIR, "app_settings.json")
     os.makedirs(USERDATA_DIR, exist_ok=True)
 
@@ -95,6 +98,11 @@ class WebBiliApp:
         self.creator_sync_running = False
         self.creator_search_lock = threading.Lock()
         self.last_creator_search_at = 0.0
+        self.tag_request_lock = threading.Lock()
+        self.next_tag_request_at = 0.0
+        self.download_tag_queue = queue.Queue()
+        self.download_tag_pending = set()
+        self.download_tag_worker = None
         self.tag_task = {
             "running": False,
             "cancelled": False,
@@ -151,6 +159,7 @@ class WebBiliApp:
             "speedMode": "\u5e73\u8861",
             "deleteAfterImport": True,
             "useDanmaku": True,
+            "syncBiliTags": True,
         }
         self.eagle = {**eagle_defaults, **self.load_json_file(EAGLE_CONFIG_PATH, {})}
         self.eagle_task = {
@@ -222,7 +231,7 @@ class WebBiliApp:
     def reset_to_fresh_install(self):
         global USERDATA_DIR, CACHE_DIR, DOWNLOAD_RECORDS_PATH
         global EAGLE_CONFIG_PATH, EAGLE_INDEX_PATH, BILI_SEARCH_CACHE_PATH
-        global BILI_CREATOR_SEARCH_CACHE_PATH, BILI_TAG_CACHE_PATH, APP_SETTINGS_PATH
+        global BILI_CREATOR_SEARCH_CACHE_PATH, BILI_TAG_CACHE_PATH, VIDEO_TAG_DIR, APP_SETTINGS_PATH
         with self.lock:
             if self.sync_running or self.creator_sync_running or self.tag_task.get("running") or self.download.get("running") or self.eagle_task.get("running"):
                 raise RuntimeError("请先停止正在运行的同步、词云、下载或 Eagle 任务")
@@ -238,6 +247,7 @@ class WebBiliApp:
         BILI_SEARCH_CACHE_PATH = os.path.join(USERDATA_DIR, "bili_title_search_cache.json")
         BILI_CREATOR_SEARCH_CACHE_PATH = os.path.join(USERDATA_DIR, "bili_creator_search_cache.json")
         BILI_TAG_CACHE_PATH = os.path.join(USERDATA_DIR, "bili_video_tags.json")
+        VIDEO_TAG_DIR = os.path.join(USERDATA_DIR, "video_tags")
         APP_SETTINGS_PATH = os.path.join(USERDATA_DIR, "app_settings.json")
         manager_module.BASE_DIR = USERDATA_DIR
         manager_module.NETSCAPE_TEMP = os.path.join(APP_DIR, "bili_netscape_temp.txt")
@@ -256,12 +266,14 @@ class WebBiliApp:
             self.bili_search_cache = {}
             self.creator_search_cache = {}
             self.tag_cache = {}
+            self.download_tag_pending = set()
             self.eagle = {
                 "libraryDir": "",
                 "folderId": "",
                 "speedMode": "\u5e73\u8861",
                 "deleteAfterImport": True,
                 "useDanmaku": True,
+                "syncBiliTags": True,
             }
             self.eagle_index = {"library": "", "count": 0, "generatedAt": ""}
             self.download = {"running": False, "total": 0, "file": 0, "title": "等待任务", "status": "Ready"}
@@ -400,6 +412,7 @@ class WebBiliApp:
                 "speedMode": "\u5e73\u8861",
                 "deleteAfterImport": True,
                 "useDanmaku": True,
+                "syncBiliTags": True,
             }
             self.eagle = {**eagle_defaults, **self.load_json_file(EAGLE_CONFIG_PATH, {})}
         if hasattr(self, "eagle_index"):
@@ -483,12 +496,51 @@ class WebBiliApp:
         return result[:40]
 
     def _tag_names_for_bvid(self, bvid):
-        cached = self.tag_cache.get(str(bvid), {})
+        key = str(bvid or "").strip()
+        cached = self.tag_cache.get(key, {})
         if isinstance(cached, dict):
-            return self._clean_tag_names(cached.get("tags"))
+            tags = self._clean_tag_names(cached.get("tags"))
+            if tags:
+                return tags
         if isinstance(cached, list):
-            return self._clean_tag_names(cached)
+            tags = self._clean_tag_names(cached)
+            if tags:
+                return tags
+        tag_path = self.video_tag_path(key)
+        if tag_path.exists():
+            try:
+                value = json.loads(tag_path.read_text(encoding="utf-8"))
+                return self._clean_tag_names(value.get("tags") if isinstance(value, dict) else value)
+            except (OSError, ValueError, TypeError):
+                pass
         return []
+
+    def video_tag_path(self, bvid):
+        safe = re.sub(r"[^0-9A-Za-z_-]", "_", str(bvid or "").strip())
+        return Path(VIDEO_TAG_DIR) / f"{safe}.json"
+
+    def _store_video_tags(self, bvid, tags, fetched_at=""):
+        key = str(bvid or "").strip()
+        cleaned = self._clean_tag_names(tags)
+        if not key:
+            return []
+        payload = {
+            "bvid": key,
+            "tags": cleaned,
+            "fetchedAt": fetched_at or datetime.datetime.now().isoformat(timespec="seconds"),
+        }
+        with self.lock:
+            self.tag_cache[key] = payload
+            self.db.save_tag(key, payload)
+        try:
+            path = self.video_tag_path(key)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temp = path.with_suffix(".json.tmp")
+            temp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            os.replace(temp, path)
+        except OSError as exc:
+            self.log(f"视频标签文件保存失败 {key}: {str(exc)[:100]}")
+        return cleaned
 
     def _tag_source_items_locked(self, source):
         sources = {
@@ -589,12 +641,19 @@ class WebBiliApp:
             "updatedAt": datetime.datetime.now().isoformat(timespec="seconds"),
         }
 
-    def _fetch_video_tags(self, bvid):
-        response = self.mgr.session.get(
-            "https://api.bilibili.com/x/tag/archive/tags",
-            params={"bvid": bvid},
-            timeout=15,
-        )
+    def _fetch_video_tags(self, bvid, minimum_interval=0.0):
+        with self.tag_request_lock:
+            delay = max(0.0, self.next_tag_request_at - time.monotonic())
+            if delay:
+                time.sleep(delay)
+            try:
+                response = self.mgr.session.get(
+                    "https://api.bilibili.com/x/tag/archive/tags",
+                    params={"bvid": bvid},
+                    timeout=15,
+                )
+            finally:
+                self.next_tag_request_at = time.monotonic() + max(0.0, float(minimum_interval or 0.0))
         if response.status_code in (403, 412, 429):
             raise RuntimeError("B 站暂时限制了标签读取，已停止词云生成")
         data = response.json()
@@ -648,15 +707,9 @@ class WebBiliApp:
                     with self.lock:
                         if self.tag_task.get("cancelled"):
                             break
-                    if index > 1:
-                        time.sleep(random.uniform(1.15, 1.9))
                     try:
-                        tags = self._fetch_video_tags(bvid)
-                        with self.lock:
-                            self.tag_cache[bvid] = {
-                                "tags": tags,
-                                "fetchedAt": datetime.datetime.now().isoformat(timespec="seconds"),
-                            }
+                        tags = self._fetch_video_tags(bvid, random.uniform(1.15, 1.9))
+                        self._store_video_tags(bvid, tags)
                     except Exception as exc:
                         failed += 1
                         text = str(exc)
@@ -669,12 +722,12 @@ class WebBiliApp:
                         self.tag_task["progress"] = index / len(missing_bvids)
                         self.tag_task["status"] = "已检测到风控，正在停止" if stopped_by_risk else f"正在读取标签 {index}/{len(missing_bvids)}"
                         if index % 8 == 0:
-                            self.save_json_file(BILI_TAG_CACHE_PATH, self.tag_cache)
+                            self.save_json_file(BILI_TAG_CACHE_PATH, self.tag_cache, sync_db=False)
                     if stopped_by_risk:
                         break
             finally:
                 with self.lock:
-                    self.save_json_file(BILI_TAG_CACHE_PATH, self.tag_cache)
+                    self.save_json_file(BILI_TAG_CACHE_PATH, self.tag_cache, sync_db=False)
                     self.tag_cloud = self._build_tag_cloud_locked(source, range_key, month, downloaded_only, items)
                     cancelled = bool(self.tag_task.get("cancelled"))
                     self.tag_task["running"] = False
@@ -1692,6 +1745,60 @@ class WebBiliApp:
             self.db.save_download_record(bvid, record)
             self.save_json_file(DOWNLOAD_RECORDS_PATH, self.download_records, sync_db=False)
         self.cache_danmaku_xml_async(bvid)
+        self.cache_video_tags_async(bvid)
+
+    def cache_video_tags_async(self, bvid):
+        key = str(bvid or "").strip()
+        if not key or self._tag_names_for_bvid(key):
+            return
+        with self.lock:
+            if key in self.download_tag_pending:
+                return
+            self.download_tag_pending.add(key)
+            self.download_tag_queue.put(key)
+            if self.download_tag_worker and self.download_tag_worker.is_alive():
+                return
+            self.download_tag_worker = threading.Thread(target=self._download_tag_worker_loop, daemon=True)
+            self.download_tag_worker.start()
+
+    def _download_tag_worker_loop(self):
+        first_request = True
+        while True:
+            try:
+                bvid = self.download_tag_queue.get(timeout=0.4)
+            except queue.Empty:
+                return
+            try:
+                # Avoid adding a request burst immediately after a batch download.
+                if first_request:
+                    time.sleep(random.uniform(4.0, 7.0))
+                    first_request = False
+                while self.tag_task.get("running"):
+                    time.sleep(1.0)
+                if self._tag_names_for_bvid(bvid):
+                    continue
+                tags = self._fetch_video_tags(bvid, random.uniform(2.4, 4.2))
+                self._store_video_tags(bvid, tags)
+                self.log(f"视频标签已缓存: {bvid}（{len(tags)} 个）")
+            except Exception as exc:
+                message = str(exc)
+                self.log(f"视频标签缓存跳过 {bvid}: {message[:120]}")
+                if "限制" in message or "风控" in message:
+                    # Drop the remaining background work rather than trying to
+                    # push through an active Bilibili restriction.
+                    while True:
+                        try:
+                            skipped_bvid = self.download_tag_queue.get_nowait()
+                        except queue.Empty:
+                            break
+                        with self.lock:
+                            self.download_tag_pending.discard(skipped_bvid)
+                        self.download_tag_queue.task_done()
+                    return
+            finally:
+                with self.lock:
+                    self.download_tag_pending.discard(bvid)
+                self.download_tag_queue.task_done()
 
     def cache_danmaku_xml_async(self, bvid):
         if not bvid:
@@ -1748,6 +1855,8 @@ class WebBiliApp:
                 self.eagle["deleteAfterImport"] = bool(payload.get("deleteAfterImport"))
             if "useDanmaku" in payload:
                 self.eagle["useDanmaku"] = bool(payload.get("useDanmaku"))
+            if "syncBiliTags" in payload:
+                self.eagle["syncBiliTags"] = bool(payload.get("syncBiliTags"))
             self.save_json_file(EAGLE_CONFIG_PATH, self.eagle)
         return {"ok": True, "eagle": self.eagle}
 
@@ -2044,6 +2153,85 @@ class WebBiliApp:
             self.db.save_download_record(bvid, record)
             self.save_json_file(DOWNLOAD_RECORDS_PATH, self.download_records, sync_db=False)
 
+    def _has_video_tag_cache(self, bvid):
+        key = str(bvid or "").strip()
+        if not key:
+            return False
+        if key in self.tag_cache:
+            return True
+        return self.video_tag_path(key).is_file()
+
+    def _load_eagle_items_for_tag_sync(self, library_dir):
+        from apply_contact_sheets_to_eagle import find_library_items
+        from eagle_batch_processor import indexed_entry_to_item
+
+        library_path = Path(library_dir)
+        index = self.load_json_file(EAGLE_INDEX_PATH, {})
+        if not isinstance(index, dict):
+            index = {}
+        try:
+            index_library = str(Path(index.get("library") or "").resolve()).lower()
+            current_library = str(library_path.resolve()).lower()
+        except OSError:
+            index_library = ""
+            current_library = ""
+        if index_library != current_library:
+            index = {}
+        if index:
+            cached_items = []
+            for entry in index.get("items") or []:
+                item = indexed_entry_to_item(entry)
+                if item:
+                    cached_items.append(item)
+            if cached_items:
+                return cached_items, "cached-index"
+        return find_library_items(library_path), "library-scan"
+
+    def _find_tag_sync_matches(self, records, eagle_items):
+        item_by_id = {
+            str(item.get("id") or "").strip(): item
+            for item in eagle_items
+            if str(item.get("id") or "").strip()
+        }
+        used_item_ids = set()
+        matches = []
+        for record in records:
+            bvid = str(record.get("bvid") or "").strip()
+            title = str(record.get("title") or "").strip()
+            eagle_data = record.get("eagle") or {}
+            known_item_id = str(eagle_data.get("itemId") or record.get("eagle_id") or "").strip()
+            item = item_by_id.get(known_item_id) if known_item_id else None
+            if item and str(item.get("id")) not in used_item_ids:
+                matches.append((record, item, "eagle-item-id"))
+                used_item_ids.add(str(item.get("id")))
+                continue
+
+            bvid_candidates = [
+                candidate for candidate in eagle_items
+                if str(candidate.get("id") or "") not in used_item_ids
+                and bvid
+                and bvid in str(candidate.get("search_text") or "")
+            ]
+            if len(bvid_candidates) == 1:
+                item = bvid_candidates[0]
+                matches.append((record, item, "bvid"))
+                used_item_ids.add(str(item.get("id")))
+                continue
+            if len(bvid_candidates) > 1:
+                continue
+
+            title_candidates = [
+                candidate for candidate in eagle_items
+                if str(candidate.get("id") or "") not in used_item_ids
+                and title
+                and title == str((candidate.get("metadata") or {}).get("name") or "")
+            ]
+            if len(title_candidates) == 1:
+                item = title_candidates[0]
+                matches.append((record, item, "title"))
+                used_item_ids.add(str(item.get("id")))
+        return matches
+
     def _find_eagle_item(self, library_dir, bvid, title, source_path, timeout=10):
         from apply_contact_sheets_to_eagle import find_library_items
 
@@ -2094,7 +2282,7 @@ class WebBiliApp:
         except Exception:
             pass
 
-    def _import_one_record_to_eagle(self, record, library_dir, folder_id, delete_after, use_danmaku, progress_cb=None, force_rebuild=False):
+    def _import_one_record_to_eagle(self, record, library_dir, folder_id, delete_after, use_danmaku, sync_bili_tags, progress_cb=None, force_rebuild=False):
         from eagle_batch_processor import SPEED_MODES, apply_speed_mode, process_record
         from export_to_eagle import EAGLE_API, eagle_available
 
@@ -2124,11 +2312,13 @@ class WebBiliApp:
         speed_mode = self.eagle.get("speedMode") or "\u5e73\u8861"
         mode = dict(SPEED_MODES.get(speed_mode, SPEED_MODES["\u5e73\u8861"]))
         mode["danmaku"] = bool(use_danmaku)
+        record_for_import = dict(record)
+        record_for_import["biliTags"] = self._tag_names_for_bvid(bvid) if sync_bili_tags else []
         apply_speed_mode(mode)
         stage("Generating contact sheet", 0.14)
         stage("Importing to Eagle", 0.58)
         updated = process_record(
-            record,
+            record_for_import,
             library_path,
             str(folder_id) if folder_id else "",
             mode,
@@ -2295,6 +2485,7 @@ class WebBiliApp:
         folder_id = payload.get("folderId") or self.eagle.get("folderId") or ""
         delete_after = bool(payload.get("deleteAfterImport", self.eagle.get("deleteAfterImport", True)))
         use_danmaku = bool(payload.get("useDanmaku", self.eagle.get("useDanmaku", True)))
+        sync_bili_tags = bool(payload.get("syncBiliTags", self.eagle.get("syncBiliTags", True)))
         speed_mode = payload.get("speedMode") or self.eagle.get("speedMode") or "\u5e73\u8861"
         force = bool(payload.get("force"))
         bvids = set(payload.get("bvids") or [])
@@ -2304,6 +2495,7 @@ class WebBiliApp:
             "speedMode": speed_mode,
             "deleteAfterImport": delete_after,
             "useDanmaku": use_danmaku,
+            "syncBiliTags": sync_bili_tags,
         })
 
         with self.lock:
@@ -2324,6 +2516,11 @@ class WebBiliApp:
             total = len(records)
             self._eagle_set_task(running=True, total=total, done=0, percent=0, current="", status="Preparing", stats={"success": 0, "skipped": 0, "failed": 0}, errors=[], paused=False, cancelled=False, type="import")
             try:
+                if sync_bili_tags:
+                    from eagle_tags import ensure_bili_tag_group
+                    from eagle_tags import api_for_library
+                    from export_to_eagle import EAGLE_API
+                    ensure_bili_tag_group(Path(library_dir), api_base=api_for_library(Path(library_dir), EAGLE_API))
                 for index, record in enumerate(records, 1):
                     self._eagle_wait_if_paused()
                     if self._eagle_should_stop():
@@ -2344,7 +2541,7 @@ class WebBiliApp:
 
                     item_progress("Starting", 0)
                     try:
-                        self._import_one_record_to_eagle(record, library_dir, folder_id, delete_after, use_danmaku, item_progress, force)
+                        self._import_one_record_to_eagle(record, library_dir, folder_id, delete_after, use_danmaku, sync_bili_tags, item_progress, force)
                         self._eagle_task_stat("success")
                         self.log(f"Eagle 导入完成：{title}")
                     except Exception as exc:
@@ -2366,6 +2563,139 @@ class WebBiliApp:
 
         threading.Thread(target=_task, daemon=True).start()
         return {"started": True, "total": len(records)}
+
+    def start_eagle_tag_sync(self, payload):
+        library_dir = str(payload.get("libraryDir") or "").strip()
+        if not library_dir:
+            raise RuntimeError("请先选择 Eagle 的 .library 库目录")
+        library_path = Path(str(library_dir or ""))
+        if not library_path.is_dir() or not (library_path / "metadata.json").is_file():
+            raise RuntimeError("Eagle 库目录无效，请选择 .library 文件夹")
+        with self.lock:
+            if self.eagle_task.get("running"):
+                raise RuntimeError("Eagle 任务正在运行")
+            known_records = self._load_known_video_records()
+            selected_bvids = {
+                str(value or "").strip()
+                for value in (payload.get("bvids") or [])
+                if str(value or "").strip()
+            }
+        records = []
+        for bvid, record in known_records.items():
+            if not isinstance(record, dict):
+                continue
+            normalized_bvid = str(record.get("bvid") or bvid).strip()
+            if not normalized_bvid or (selected_bvids and normalized_bvid not in selected_bvids):
+                continue
+            normalized = dict(record)
+            normalized["bvid"] = normalized_bvid
+            normalized["title"] = str(normalized.get("title") or normalized_bvid)
+            records.append(normalized)
+        if not records:
+            raise RuntimeError("没有找到带 BV 号的下载记录")
+        eagle_items, item_source = self._load_eagle_items_for_tag_sync(library_path)
+        if not eagle_items:
+            raise RuntimeError("Eagle 库中没有可匹配的项目")
+        self.set_eagle_config({"libraryDir": str(library_path)})
+
+        def _task():
+            previous_headless = os.environ.get("BILI_WEB_HEADLESS")
+            os.environ["BILI_WEB_HEADLESS"] = "1"
+            total = len(records)
+            self._eagle_set_task(
+                running=True,
+                total=total,
+                done=0,
+                percent=0,
+                current="",
+                status=f"Preparing tag sync ({item_source})",
+                stats={"success": 0, "skipped": 0, "failed": 0},
+                errors=[],
+                paused=False,
+                cancelled=False,
+                type="tag-sync",
+            )
+            try:
+                from eagle_tags import api_for_library, append_bili_tags_to_item, ensure_bili_tag_group, prune_unused_bili_tags
+                from export_to_eagle import EAGLE_API
+                eagle_api = api_for_library(library_path, EAGLE_API)
+
+                matches = self._find_tag_sync_matches(records, eagle_items)
+                matched_by_bvid = {str(record.get("bvid") or "").strip(): (record, item, reason) for record, item, reason in matches}
+                ensure_bili_tag_group(library_path, api_base=eagle_api)
+                stopped_by_risk = False
+                for index, record in enumerate(records, 1):
+                    self._eagle_wait_if_paused()
+                    if self._eagle_should_stop():
+                        break
+                    bvid = str(record.get("bvid") or "").strip()
+                    title = str(record.get("title") or bvid)
+                    self._eagle_set_task(
+                        done=index - 1,
+                        percent=(index - 1) / total,
+                        current=title,
+                        status=f"{index}/{total} Matching Eagle item",
+                    )
+                    try:
+                        matched = matched_by_bvid.get(bvid)
+                        if not matched:
+                            self._eagle_task_stat("skipped")
+                            self.log(f"Eagle 标签同步跳过：未匹配项目 {bvid} {title}")
+                            continue
+                        _, item, match_reason = matched
+                        tags = self._tag_names_for_bvid(bvid)
+                        if not self._has_video_tag_cache(bvid):
+                            tags = self._fetch_video_tags(bvid, random.uniform(2.4, 4.2))
+                            self._store_video_tags(bvid, tags)
+                        if not tags:
+                            self._eagle_task_stat("skipped")
+                            self.log(f"Eagle 标签同步跳过：视频没有可用标签 {bvid} {title}")
+                            continue
+                        ensure_bili_tag_group(library_path, tags, api_base=eagle_api)
+                        append_bili_tags_to_item(item, library_path, tags, api_base=eagle_api)
+                        self._record_eagle_result(
+                            bvid,
+                            {
+                                "itemId": item.get("id") or "",
+                                "biliTags": tags,
+                                "biliTagGroup": "BiliDownloader 标签",
+                                "tagsSyncedAt": datetime.datetime.now().isoformat(timespec="seconds"),
+                                "tagsSyncError": "",
+                            },
+                        )
+                        self._eagle_task_stat("success")
+                        self.log(f"Eagle 标签同步完成：{bvid} {title}（{match_reason}，{len(tags)} 个）")
+                    except Exception as exc:
+                        message = str(exc)
+                        self._eagle_task_error(f"{title}: {message}")
+                        self.log(f"Eagle 标签同步失败：{bvid} {title}: {message}")
+                        if "限制" in message or "风控" in message:
+                            stopped_by_risk = True
+                            break
+                    finally:
+                        self._eagle_set_task(done=index, percent=index / total)
+                cleanup = prune_unused_bili_tags(library_path, api_base=eagle_api)
+                self.log(f"Eagle 标签组已按实际项目清理：移除 {cleanup['removed']} 个，保留 {cleanup['remaining']} 个")
+                status = "Cancelled" if self.eagle_task.get("cancelled") else ("Stopped by Bilibili restriction" if stopped_by_risk else "Done")
+                completed_percent = self.eagle_task.get("percent", 0)
+                self._eagle_set_task(
+                    running=False,
+                    current="",
+                    status=status,
+                    percent=completed_percent if status in {"Cancelled", "Stopped by Bilibili restriction"} else 1,
+                    paused=False,
+                )
+            except Exception as exc:
+                self._eagle_task_error(exc)
+                self._eagle_set_task(running=False, current="", status="Error", paused=False)
+            finally:
+                if previous_headless is None:
+                    os.environ.pop("BILI_WEB_HEADLESS", None)
+                else:
+                    os.environ["BILI_WEB_HEADLESS"] = previous_headless
+
+        threading.Thread(target=_task, daemon=True).start()
+        return {"started": True, "total": len(records), "matched": len(self._find_tag_sync_matches(records, eagle_items))}
 
     def open_eagle_batch_processor(self):
         script = os.path.join(EAGLE_DIR, "eagle_batch_processor.py")
@@ -2581,6 +2911,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(APP.refresh_eagle_index(payload))
             if path == "/api/eagle/import":
                 return self.send_json(APP.start_eagle_import(payload))
+            if path == "/api/eagle/tag-sync":
+                return self.send_json(APP.start_eagle_tag_sync(payload))
             if path == "/api/eagle/folder-thumbnails":
                 return self.send_json(APP.start_eagle_folder_thumbnails(payload))
             if path == "/api/eagle/pause":

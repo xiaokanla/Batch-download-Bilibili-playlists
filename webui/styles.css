@@ -226,6 +226,11 @@ h3 {
   line-height: 1.55;
 }
 
+.compact-note {
+  margin: -2px 0 8px;
+  font-size: 11px;
+}
+
 .top-subtitle {
   margin-top: 6px;
 }
@@ -1293,6 +1298,8 @@ h3 {
 .tag-edge.focus {
   stroke: rgba(251, 114, 153, 0.9);
   stroke-width: 3.5;
+  opacity: 1;
+  filter: drop-shadow(0 0 4px rgba(251, 114, 153, 0.45));
 }
 
 .tag-node {
@@ -1328,6 +1335,38 @@ h3 {
   stroke: #ffffff;
   stroke-width: 2.5;
   filter: drop-shadow(0 0 9px rgba(251, 114, 153, 0.72));
+}
+
+.tag-node.hovered {
+  opacity: 1;
+  transform: scale(1.14);
+}
+
+.tag-node.hovered circle {
+  stroke: #ffffff;
+  stroke-width: 3;
+  filter:
+    drop-shadow(0 0 5px rgba(255, 255, 255, 0.95))
+    drop-shadow(0 0 14px rgba(251, 114, 153, 0.9));
+}
+
+.tag-node.hovered text {
+  fill: #ffffff;
+  font-weight: 800;
+}
+
+.tag-node.connected {
+  opacity: 1;
+}
+
+.tag-node.connected circle {
+  stroke: rgba(142, 226, 255, 0.95);
+  stroke-width: 2;
+  filter: drop-shadow(0 0 8px rgba(109, 200, 255, 0.72));
+}
+
+.tag-node.connected text {
+  fill: #eef8ff;
 }
 
 .tag-node.active text {

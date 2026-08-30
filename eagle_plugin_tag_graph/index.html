@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>标签蛛网图</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="app-shell">
+    <header class="topbar">
+      <div>
+        <div class="title-line">
+          <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+          <div>
+            <div class="eyebrow">EAGLE PLUGIN / INSIGHT</div>
+            <h1>标签蛛网图</h1>
+            <p id="libraryLine" class="subtle">正在连接当前 Eagle 资源库...</p>
+          </div>
+        </div>
+      </div>
+      <div class="top-actions">
+        <span id="cacheBadge" class="status-badge"><b></b>准备中</span>
+        <button id="refreshButton" class="button primary" type="button">刷新库缓存</button>
+      </div>
+    </header>
+    <section class="toolbar" aria-label="分析设置">
+      <label><span>分析范围</span><select id="scopeSelect"><option value="all">整个资源库</option><option value="folder">当前文件夹</option><option value="selected">当前选中项目</option></select></label>
+      <label><span>标签来源</span><select id="groupSelect"><option value="all">全部实际使用的标签</option></select></label>
+      <label class="search-label"><span>搜索标签</span><input id="tagSearch" type="search" placeholder="输入标签名称"></label>
+      <button id="resetViewButton" class="button ghost" type="button">重置视图</button>
+    </section>
+    <section class="notice-row">
+      <div id="message" class="message">插件只读取 Eagle 数据，不会修改项目、标签或文件夹。</div>
+      <div id="statsLine" class="stats-line">尚未载入</div>
+    </section>
+    <section class="content-grid">
+      <div class="graph-panel">
+        <div class="panel-heading"><div><div class="eyebrow">RELATION MAP</div><h2>标签关联</h2></div><div class="graph-hint">拖动平移 · 滚轮缩放 · 悬停高亮</div></div>
+        <div id="graphHost" class="graph-host"><div class="loading">正在准备图形...</div></div>
+      </div>
+      <aside class="side-panel">
+        <div class="panel-heading"><div><div class="eyebrow">TAG INDEX</div><h2>标签排行</h2></div><span id="tagCount" class="count-pill">0</span></div>
+        <div id="tagList" class="tag-list"><div class="empty">载入后显示实际使用中的标签。</div></div>
+        <div class="selection-box"><div class="eyebrow">当前选择</div><strong id="selectionTitle">未选择标签</strong><span id="selectionDetail">点击节点或列表标签，可在 Eagle 中查看对应素材。</span><button id="clearSelectionButton" class="button ghost small" type="button">清除选择</button></div>
+        <section id="resultSection" class="result-section hidden">
+          <div class="result-heading">
+            <div><div class="eyebrow">MATCHED ITEMS</div><strong>对应视频</strong></div>
+            <span id="resultCount" class="count-pill">0</span>
+          </div>
+          <div id="resultList" class="result-list"></div>
+        </section>
+      </aside>
+    </section>
+    <footer class="footer"><span id="footerStatus">标签关联按同一项目中的共现关系计算。</span><span>缓存保存在 Eagle 插件本地，不上传到网络。</span></footer>
+  </main>
+  <script src="js/plugin.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

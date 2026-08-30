@@ -18,6 +18,12 @@ BiliDownloader_0705/
     import_videos_to_eagle.py # 视频扫描、抽帧、套图生成
     apply_contact_sheets_to_eagle.py # 写入 Eagle 自定义缩略图
     eagle_batch_processor.py  # 独立 Eagle 批处理器
+  eagle_plugin_tag_graph/
+    manifest.json              # Eagle 窗口插件清单
+    index.html                 # 插件页面
+    js/plugin.js               # Eagle 生命周期桥接
+    js/app.js                  # 缓存、统计和关系图交互
+    styles.css                 # 插件样式
   userdata/                   # 用户数据，开源时不要提交
 ```
 
@@ -155,3 +161,20 @@ $files = @("web_app.py","worker.py") + (Get-ChildItem eagle_integration -Filter 
 python -m py_compile @files
 node --check webui\app.js
 ```
+
+## 10. Eagle 标签关系图插件
+
+`eagle_plugin_tag_graph/` 是独立的 Eagle 窗口插件，不依赖下载器后端、SQLite、Cookie
+或用户数据。插件通过 Eagle Plugin API 读取当前资源库项目、文件夹和标签群组，在插件
+自己的 `localStorage` 中保存索引缓存。首次打开会读取当前库，之后如果资源库修改时间
+没有变化则优先使用缓存；新建、删除或批量修改 Eagle 内容后，点击插件内的“刷新库缓存”。
+
+插件目前是只读 MVP：
+
+- 全库、当前文件夹、当前选中项目三种分析范围；
+- 按实际使用中的标签和标签群组过滤；
+- 标签出现次数和同项目共现关系；
+- 拖动、滚轮缩放、悬停高亮；
+- 点击标签后用 Eagle API 选中对应项目。
+
+插件安装和开发说明见 `eagle_plugin_tag_graph/README.md`。

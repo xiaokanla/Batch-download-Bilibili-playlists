@@ -630,6 +630,19 @@ function renderTagRelationGraph(container, cloud, graphSignature = "") {
     renderListIfNeeded(true);
     renderTagCloud();
   };
+  const updateHoverHighlight = (name) => {
+    container.querySelectorAll(".tag-node").forEach((item) => {
+      const connected = isTagConnected(name, item.dataset.tag, validEdges);
+      item.classList.toggle("hovered", item.dataset.tag === name);
+      item.classList.toggle("connected", connected && item.dataset.tag !== name);
+      item.classList.toggle("dim", !connected);
+    });
+    container.querySelectorAll(".tag-edge").forEach((edge) => {
+      const connected = edge.dataset.source === name || edge.dataset.target === name;
+      edge.classList.toggle("focus", connected);
+      edge.classList.toggle("dim", !connected);
+    });
+  };
   container.querySelectorAll(".tag-node").forEach((node) => {
     node.onclick = () => applyTagFilter(node.dataset.tag);
     node.onkeydown = (event) => {
@@ -639,12 +652,12 @@ function renderTagRelationGraph(container, cloud, graphSignature = "") {
       }
     };
     node.onmouseenter = () => {
-      const name = node.dataset.tag;
-      container.querySelectorAll(".tag-node").forEach((item) => item.classList.toggle("dim", item !== node && !isTagConnected(name, item.dataset.tag, validEdges)));
-      container.querySelectorAll(".tag-edge").forEach((edge) => edge.classList.toggle("focus", edge.dataset.source === name || edge.dataset.target === name));
+      updateHoverHighlight(node.dataset.tag);
     };
     node.onmouseleave = () => {
       container.querySelectorAll(".tag-node, .tag-edge").forEach((item) => item.classList.remove("dim", "focus"));
+      container.querySelectorAll(".tag-node").forEach((item) => item.classList.remove("hovered", "connected"));
+      updateTagGraphHighlight(container, app.tagFilter);
     };
   });
   updateTagGraphHighlight(container, app.tagFilter);
@@ -662,10 +675,12 @@ function updateTagGraphHighlight(container, activeTag) {
   const edges = [...container.querySelectorAll(".tag-edge")];
   container.querySelectorAll(".tag-node").forEach((node) => {
     node.classList.toggle("active", Boolean(activeTag) && node.dataset.tag === activeTag);
+    node.classList.remove("hovered", "connected");
     node.classList.toggle("dim", Boolean(activeTag) && node.dataset.tag !== activeTag && !isTagConnected(activeTag, node.dataset.tag, edges));
   });
   edges.forEach((edge) => {
     const connected = !activeTag || edge.dataset.source === activeTag || edge.dataset.target === activeTag;
+    edge.classList.remove("focus");
     edge.classList.toggle("dim", !connected);
   });
 }
@@ -1044,6 +1059,7 @@ function renderEagle() {
   renderEagleFolders(cfg.folderId || "");
   if ($("deleteAfterEagle")) $("deleteAfterEagle").checked = cfg.deleteAfterImport !== false;
   if ($("useDanmakuEagle")) $("useDanmakuEagle").checked = cfg.useDanmaku !== false;
+  if ($("syncBiliTagsEagle")) $("syncBiliTagsEagle").checked = cfg.syncBiliTags !== false;
   if ($("eagleSpeedMode")) $("eagleSpeedMode").value = cfg.speedMode || "\u5e73\u8861";
   const total = Number(task.total || 0);
   const done = Number(task.done || 0);
@@ -1349,6 +1365,17 @@ function openHelpGuide() {
           <li>点击“导入已下载视频到 Eagle”。</li>
         </ol>
         <p>导入时会生成封面套图：上方尽量使用 B站原封面，下方从视频中抽取静帧。开启弹幕峰值时，会优先选择弹幕高峰附近的画面。</p>
+      </section>
+
+      <section>
+        <h3>旧 Eagle 视频同步标签</h3>
+        <ol>
+          <li>选择正确的 Eagle .library 库目录。</li>
+          <li>如果只处理部分视频，先在中间列表勾选它们；不勾选则处理下载记录中的全部 BV 号。</li>
+          <li>点击“只给历史 Eagle 视频同步标签”。</li>
+        </ol>
+        <p>这个功能不需要本地视频，不会重新下载、重新导入或重新生成封面。程序会优先按 Eagle 项目 ID 和 BV 号匹配，最后才使用唯一标题匹配；无法确认的项目会跳过。</p>
+        <p>执行时建议关闭 Eagle，避免 Eagle 同时写入库文件。标签会统一放进独立的“BiliDownloader 标签”标签组，原有 Eagle 标签不会被删除。</p>
       </section>
 
       <section>
@@ -1794,6 +1821,7 @@ function bindEvents() {
           speedMode: $("eagleSpeedMode").value,
           deleteAfterImport: $("deleteAfterEagle").checked,
           useDanmaku: $("useDanmakuEagle").checked,
+          syncBiliTags: $("syncBiliTagsEagle").checked,
           force: $("forceEagleRebuild").checked,
         },
       });
@@ -1846,9 +1874,30 @@ function bindEvents() {
           speedMode: $("eagleSpeedMode").value,
           deleteAfterImport: $("deleteAfterEagle").checked,
           useDanmaku: $("useDanmakuEagle").checked,
+          syncBiliTags: $("syncBiliTagsEagle").checked,
         },
       });
       toast(`Eagle \u5bfc\u5165\u5df2\u542f\u52a8\uff1a${result.total} \u4e2a\u89c6\u9891`);
+      await refresh();
+    } catch (error) {
+      toast(error.message);
+    }
+  };
+  $("eagleTagSyncBtn").onclick = async () => {
+    try {
+      if (!$("eagleLibrary").value.trim()) {
+        toast("请先选择 Eagle 的 .library 库目录");
+        scrollIntoPanel("chooseEagleBtn");
+        return;
+      }
+      const result = await api("/api/eagle/tag-sync", {
+        method: "POST",
+        body: {
+          bvids: selectedArray(),
+          libraryDir: $("eagleLibrary").value.trim(),
+        },
+      });
+      toast(`历史视频标签同步已启动：${result.total} 条记录，预计匹配 ${result.matched} 项`);
       await refresh();
     } catch (error) {
       toast(error.message);
@@ -1914,6 +1963,7 @@ function bindEvents() {
       speedMode: $("eagleSpeedMode").value,
       deleteAfterImport: $("deleteAfterEagle").checked,
       useDanmaku: $("useDanmakuEagle").checked,
+      syncBiliTags: $("syncBiliTagsEagle").checked,
     },
   }).then(refresh).catch((error) => toast(error.message));
   $("useDanmakuEagle").onchange = () => api("/api/eagle/config", {
@@ -1924,6 +1974,18 @@ function bindEvents() {
       speedMode: $("eagleSpeedMode").value,
       deleteAfterImport: $("deleteAfterEagle").checked,
       useDanmaku: $("useDanmakuEagle").checked,
+      syncBiliTags: $("syncBiliTagsEagle").checked,
+    },
+  }).then(refresh).catch((error) => toast(error.message));
+  $("syncBiliTagsEagle").onchange = () => api("/api/eagle/config", {
+    method: "POST",
+    body: {
+      libraryDir: $("eagleLibrary").value.trim(),
+      folderId: $("eagleFolder").value,
+      speedMode: $("eagleSpeedMode").value,
+      deleteAfterImport: $("deleteAfterEagle").checked,
+      useDanmaku: $("useDanmakuEagle").checked,
+      syncBiliTags: $("syncBiliTagsEagle").checked,
     },
   }).then(refresh).catch((error) => toast(error.message));
   $("eagleSpeedMode").onchange = () => api("/api/eagle/config", {
@@ -1934,6 +1996,7 @@ function bindEvents() {
       speedMode: $("eagleSpeedMode").value,
       deleteAfterImport: $("deleteAfterEagle").checked,
       useDanmaku: $("useDanmakuEagle").checked,
+      syncBiliTags: $("syncBiliTagsEagle").checked,
     },
   }).then(refresh).catch((error) => toast(error.message));
   $("eagleFolder").onchange = () => api("/api/eagle/config", {
@@ -1944,6 +2007,7 @@ function bindEvents() {
       speedMode: $("eagleSpeedMode").value,
       deleteAfterImport: $("deleteAfterEagle").checked,
       useDanmaku: $("useDanmakuEagle").checked,
+      syncBiliTags: $("syncBiliTagsEagle").checked,
     },
   }).then(refresh).catch((error) => toast(error.message));
   $("pauseBtn").onclick = () => api("/api/download/pause", { method: "POST", body: {} }).then(refresh);
