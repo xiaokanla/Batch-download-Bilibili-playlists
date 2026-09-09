@@ -79,6 +79,7 @@ http://127.0.0.1:8765
 
 - [用户指南](docs/USER_GUIDE.md)
 - [开发者指南](docs/DEVELOPER_GUIDE.md)
+- [发布指南](docs/RELEASE_GUIDE.md)
 
 ## 风控原则
 
