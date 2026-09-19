@@ -163,12 +163,20 @@ async function api(path, options = {}) {
     signal: options.signal,
   });
   const contentType = res.headers.get("Content-Type") || "";
+  const text = await res.text();
   if (!contentType.includes("application/json")) {
-    const text = await res.text();
     const preview = text.trim().slice(0, 80);
     throw new Error(`后端接口返回异常，可能是打开了旧版本服务或接口不存在：${path}${preview ? `（${preview}...）` : ""}`);
   }
-  const data = await res.json();
+  if (!text.trim()) {
+    throw new Error(`后端接口未返回数据：${path}，请重试或重启程序`);
+  }
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch (error) {
+    throw new Error(`后端接口返回了无法识别的数据：${path}`);
+  }
   if (!res.ok) throw new Error(data.error || "请求失败");
   return data;
 }
@@ -227,7 +235,10 @@ function renderState() {
   $('userName').textContent = app.state.user?.name || "未登录";
   $("envLine").textContent = `${app.state.env.ffmpeg ? "FFmpeg 就绪" : "FFmpeg 未检测"} · ${app.state.env.aria2 ? "Aria2 就绪" : "Aria2 未检测"}`;
   $("syncProgress").style.width = `${Math.round((app.state.sync?.progress || 0) * 100)}%`;
-  $("metricSync").textContent = app.state.sync?.running ? "Syncing" : "Idle";
+  const syncRunning = Boolean(app.state.sync?.running);
+  if (window.BiliMotion) window.BiliMotion.setMetric("metricSync", syncRunning ? "Syncing" : "Idle");
+  else $("metricSync").textContent = syncRunning ? "Syncing" : "Idle";
+  window.BiliMotion?.setActivity("syncProgress", syncRunning, "syncBtn");
 
   renderModeLayout();
   renderFavSelect();
@@ -319,6 +330,7 @@ function guideStatus() {
 }
 
 function setMode(mode) {
+  if (app.mode !== mode) window.BiliMotion?.modeSwitch();
   app.mode = mode;
   app.page = 1;
   app.monthFilter = "";
@@ -327,6 +339,7 @@ function setMode(mode) {
     $(`mode${name[0].toUpperCase()}${name.slice(1)}`).classList.toggle("active", name === mode);
   });
   renderModeLayout();
+  renderCreatorSource();
   renderMetrics();
   renderChart();
   renderTagCloud();
@@ -338,44 +351,124 @@ function renderModeLayout() {
   const creatorMode = app.mode === "creator";
   $("favSourcePanel").classList.toggle("hidden", creatorMode);
   $("creatorSourcePanel").classList.toggle("hidden", !creatorMode);
+  $("creatorWorkbench").classList.toggle("hidden", !creatorMode);
+  $("beginnerGuide").classList.toggle("hidden", creatorMode);
   $("workbenchTitle").textContent = creatorMode ? "账号投稿下载" : app.mode === "manual" ? "手动视频下载" : "收藏夹下载工作台";
   $("workbenchSubtitle").textContent = creatorMode
-    ? "先选择账号，获取公开投稿后可用顶部搜索筛选。"
+    ? "按创作者获取公开投稿，再按标题或 BV 号筛选下载。"
     : app.mode === "manual"
       ? "通过视频链接、BV 号或合集添加要下载的视频。"
       : "按页面上的步骤操作，不需要了解技术细节。";
   $("searchInput").placeholder = creatorMode ? "筛选当前账号投稿的标题 / BV 号" : "搜索标题 / BV 号";
+  $("metricTotalLabel").textContent = creatorMode ? "账号投稿" : "当前列表";
+  $("metricSyncLabel").textContent = creatorMode ? "获取状态" : "同步状态";
+}
+
+function creatorInitial(item) {
+  return String(item?.name || item?.mid || "UP").trim().slice(0, 1).toUpperCase() || "UP";
+}
+
+function creatorAvatarMarkup(item, extraClass = "") {
+  const face = proxyCover(item?.face || "");
+  const className = `creator-avatar ${extraClass}`.trim();
+  return face
+    ? `<span class="${className}"><img loading="lazy" src="${escapeAttr(face)}" alt=""></span>`
+    : `<span class="${className}">${escapeHtml(creatorInitial(item))}</span>`;
+}
+
+function setCreatorAvatar(id, item) {
+  const target = $(id);
+  if (!target) return;
+  const signature = `${item?.mid || ""}:${item?.face || ""}:${item?.name || ""}`;
+  if (target.dataset.signature === signature) return;
+  target.dataset.signature = signature;
+  const face = proxyCover(item?.face || "");
+  target.innerHTML = face
+    ? `<img loading="lazy" src="${escapeAttr(face)}" alt="">`
+    : escapeHtml(creatorInitial(item));
 }
 
 function renderCreatorSource() {
   const task = app.state?.creatorSync || {};
-  const select = $("creatorResults");
+  const results = $("creatorResults");
   const syncBtn = $("creatorSyncBtn");
+  const source = app.state?.creatorSource || {};
+  const videos = app.state?.creatorVideos || [];
   $("creatorSyncProgress").style.width = `${Math.round((task.progress || 0) * 100)}%`;
+  window.BiliMotion?.setActivity("creatorSyncProgress", Boolean(task.running), "creatorSyncBtn");
   if (!app.creatorCandidates.some((item) => String(item.mid) === String(app.selectedCreatorMid))) {
     app.selectedCreatorMid = "";
   }
-  if (select.dataset.signature !== JSON.stringify(app.creatorCandidates.map((item) => [item.mid, item.name, item.fans]))) {
-    const options = app.creatorCandidates.map((item) => {
-      const fans = Number(item.fans || 0);
-      const suffix = fans ? ` · ${fans.toLocaleString()} 粉丝` : "";
-      return `<option value="${escapeAttr(item.mid)}">${escapeHtml(item.name)}${escapeHtml(suffix)} · UID ${escapeHtml(item.mid)}</option>`;
-    });
-    select.innerHTML = `<option value="">请选择账号</option>${options.join("")}`;
-    select.dataset.signature = JSON.stringify(app.creatorCandidates.map((item) => [item.mid, item.name, item.fans]));
+
+  const candidatesSignature = JSON.stringify(app.creatorCandidates.map((item) => [item.mid, item.name, item.fans, item.face]));
+  if (results.dataset.signature !== candidatesSignature || results.dataset.searching !== String(app.creatorSearchRunning)) {
+    if (app.creatorCandidates.length) {
+      results.innerHTML = app.creatorCandidates.map((item) => {
+        const fans = Number(item.fans || 0);
+        return `
+          <button class="creator-candidate" type="button" role="option"
+            data-creator-mid="${escapeAttr(item.mid)}" aria-selected="false">
+            ${creatorAvatarMarkup(item)}
+            <span class="creator-candidate-copy">
+              <strong>${escapeHtml(item.name || item.mid)}</strong>
+              <small>${fans.toLocaleString()} 粉丝</small>
+              <em>UID ${escapeHtml(item.mid)}</em>
+            </span>
+            <span class="creator-choice" aria-hidden="true"></span>
+          </button>
+        `;
+      }).join("");
+    } else {
+      results.innerHTML = `<div class="creator-empty">${app.creatorSearchRunning ? "正在查找账号..." : "搜索结果会显示在这里"}</div>`;
+    }
+    results.dataset.signature = candidatesSignature;
+    results.dataset.searching = String(app.creatorSearchRunning);
   }
-  select.disabled = !app.creatorCandidates.length || Boolean(task.running);
-  select.value = app.selectedCreatorMid;
-  syncBtn.disabled = !app.selectedCreatorMid || Boolean(task.running);
+  results.querySelectorAll(".creator-candidate").forEach((card) => {
+    const selected = String(card.dataset.creatorMid) === String(app.selectedCreatorMid);
+    card.classList.toggle("selected", selected);
+    card.setAttribute("aria-selected", String(selected));
+  });
+
+  const selected = app.creatorCandidates.find(
+    (item) => String(item.mid) === String(app.selectedCreatorMid),
+  );
+  $("creatorSelectedPanel").classList.toggle("hidden", !selected);
+  if (selected) {
+    const fans = Number(selected.fans || 0);
+    setCreatorAvatar("creatorSelectedAvatar", selected);
+    $("creatorSelectedName").textContent = selected.name || selected.mid;
+    $("creatorSelectedMeta").textContent = `${fans.toLocaleString()} 粉丝 · UID ${selected.mid}`;
+  }
+
+  const current = source.mid ? source : selected;
+  setCreatorAvatar("creatorRailAvatar", current || {});
+  $("creatorRailTitle").textContent = current ? (current.name || current.mid) : "尚未选择账号";
+  $("creatorRailMeta").textContent = current
+    ? `UID ${current.mid}${source.mid ? " · 当前来源" : " · 等待获取"}`
+    : "等待检索";
+  $("creatorRailCount").textContent = source.mid ? videos.length.toLocaleString() : "0";
+
+  if (app.creatorSearchRunning) {
+    $("creatorCandidateCount").textContent = "正在检索...";
+  } else if (app.creatorCandidates.length) {
+    $("creatorCandidateCount").textContent = `找到 ${app.creatorCandidates.length} 个候选账号`;
+  } else {
+    $("creatorCandidateCount").textContent = "输入名称、UID 或主页链接";
+  }
+
+  syncBtn.disabled = !selected || Boolean(task.running);
+  syncBtn.textContent = task.running ? "正在获取投稿..." : "获取该账号投稿";
   $("creatorSearchBtn").disabled = Boolean(task.running) || app.creatorSearchRunning;
   $("creatorSearchBtn").textContent = app.creatorSearchRunning ? "检索中..." : "查找账号";
-  const source = app.state?.creatorSource || {};
   if (task.running) {
     $("creatorSyncHint").textContent = `正在低频获取投稿：${Math.round((task.progress || 0) * 100)}%`;
-  } else if (source.mid && (app.state?.creatorVideos || []).length) {
-    $("creatorSyncHint").textContent = `当前列表：${source.name || source.mid} · ${(app.state.creatorVideos || []).length} 个视频，可用顶部搜索栏筛选`;
+  } else if (source.mid && videos.length) {
+    $("creatorSyncHint").textContent = `已载入 ${source.name || source.mid} 的 ${videos.length} 个投稿，可使用顶部搜索栏继续筛选。`;
+  } else if (selected) {
+    $("creatorSyncHint").textContent = "账号已选择，可以获取其公开投稿。";
   } else {
-    $("creatorSyncHint").textContent = "检索账号后，选择一个候选账号，再获取公开投稿。";
+    $("creatorSyncHint").textContent = "选择候选账号后即可获取投稿。";
   }
 }
 
@@ -433,6 +526,7 @@ function renderTagCloud() {
     && (range !== "month" || cloud.month === month);
   const progress = Math.max(0, Math.min(1, Number(task.progress || 0)));
   $("tagCloudProgress").style.width = `${Math.round(progress * 100)}%`;
+  window.BiliMotion?.setActivity("tagCloudProgress", running, "generateTagCloudBtn");
   $("generateTagCloudBtn").disabled = running || !currentItems().length;
   $("cancelTagCloudBtn").classList.toggle("hidden", !running);
   $("clearTagFilterBtn").classList.toggle("hidden", !app.tagFilter);
@@ -816,9 +910,18 @@ function toggleFavDropdown() {
 function renderMetrics() {
   const items = currentItems();
   const history = historySet();
-  $("metricTotal").textContent = items.length;
-  $("metricDone").textContent = items.filter((x) => history.has(x.bvid)).length;
-  $("metricSelected").textContent = app.selected.size;
+  const total = items.length;
+  const done = items.filter((x) => history.has(x.bvid)).length;
+  if (window.BiliMotion) {
+    window.BiliMotion.setMetric("metricTotal", total);
+    window.BiliMotion.setMetric("metricDone", done);
+    window.BiliMotion.setMetric("metricSelected", app.selected.size);
+  } else {
+    $("metricTotal").textContent = total;
+    $("metricDone").textContent = done;
+    $("metricSelected").textContent = app.selected.size;
+  }
+  updateSelectAllControl();
 }
 
 function renderChart() {
@@ -933,6 +1036,7 @@ function updateListVisualState(pageItems = []) {
     const selected = app.selected.has(item.bvid);
     card.classList.toggle("done", done);
     card.classList.toggle("selected", selected);
+    card.setAttribute("aria-selected", String(selected));
     const checkbox = card.querySelector(".check");
     if (checkbox) checkbox.checked = selected;
     const badge = card.querySelector(".badge");
@@ -954,6 +1058,7 @@ function renderList(pageItems, totalPages) {
   }
 
   let lastMonth = "";
+  let cardIndex = 0;
   const html = [];
   for (const item of pageItems) {
     if (app.mode !== "manual" && app.groupByMonth && item.month !== lastMonth) {
@@ -963,9 +1068,11 @@ function renderList(pageItems, totalPages) {
     const done = history.has(item.bvid);
     const selected = app.selected.has(item.bvid);
     const cover = proxyCover(item.cover || item.pic || "");
+    const cardDelay = Math.min(cardIndex, 8) * 24;
+    cardIndex += 1;
     html.push(`
-      <article class="video-card ${done ? "done" : ""} ${selected ? "selected" : ""}" data-bvid="${escapeHtml(item.bvid)}">
-        <input class="check" type="checkbox" ${selected ? "checked" : ""} />
+      <article class="video-card ${done ? "done" : ""} ${selected ? "selected" : ""}" data-bvid="${escapeHtml(item.bvid)}" style="--card-delay:${cardDelay}ms" role="option" aria-selected="${selected}" tabindex="0">
+        <input class="check" type="checkbox" aria-label="选择 ${escapeAttr(item.title || item.bvid)}" ${selected ? "checked" : ""} />
         <div class="cover">${cover ? `<img loading="lazy" src="${escapeAttr(cover)}" alt="">` : ""}</div>
         <div class="info">
           <div class="title">${escapeHtml(item.title || item.bvid)}</div>
@@ -980,9 +1087,11 @@ function renderList(pageItems, totalPages) {
     const bvid = card.dataset.bvid;
     card.addEventListener("click", (event) => {
       if (event.target.classList.contains("check")) return;
+      card.focus({ preventScroll: true });
       toggleSelect(bvid);
     });
     card.querySelector(".check").addEventListener("change", () => toggleSelect(bvid));
+    card.addEventListener("keydown", (event) => handleVideoCardKeydown(event, card));
     card.addEventListener("contextmenu", (event) => {
       event.preventDefault();
       showVideoContextMenu(event.clientX, event.clientY, bvid);
@@ -1026,6 +1135,8 @@ function renderDownload() {
   $("downloadStatus").textContent = d.status || "Ready";
   $("totalProgress").style.width = `${Math.round((d.total || 0) * 100)}%`;
   $("fileProgress").style.width = `${Math.round((d.file || 0) * 100)}%`;
+  window.BiliMotion?.setActivity("totalProgress", Boolean(d.running), "startBtn");
+  window.BiliMotion?.setActivity("fileProgress", Boolean(d.running));
 }
 
 function setInputValue(id, value) {
@@ -1070,6 +1181,7 @@ function renderEagle() {
   if ($("eaglePercent")) $("eaglePercent").textContent = `${percent}%`;
   $("eagleTaskTitle").textContent = task.current || (task.running ? "正在处理 Eagle 任务" : "等待 Eagle 任务");
   $("eagleTaskStatus").textContent = task.status || "Idle";
+  window.BiliMotion?.setActivity("eagleProgress", Boolean(task.running), "eagleImportBtn");
   if ($("eagleProgressDetail")) $("eagleProgressDetail").textContent = total ? `${done}/${total}` : "0/0";
   const stats = task.stats || {};
   if ($("eagleTaskStats")) {
@@ -1101,6 +1213,8 @@ function renderDiagnostics() {
   if (!list || !summary) return;
   if (btn) btn.textContent = app.diagnosticsLoading ? "检查中" : "运行";
   if (btn) btn.disabled = app.diagnosticsLoading;
+  if (btn) btn.classList.toggle("is-busy", app.diagnosticsLoading);
+  list.closest(".panel")?.classList.toggle("is-running", app.diagnosticsLoading);
   if (!app.diagnostics) return;
   const signature = `${app.diagnosticsLoading ? "loading" : "ready"}:${JSON.stringify(app.diagnostics)}`;
   if (list.dataset.signature === signature) return;
@@ -1189,11 +1303,99 @@ function renderLogs() {
   $("logs").scrollTop = $("logs").scrollHeight;
 }
 
+function updateSelectedCard(bvid, selected) {
+  const card = [...$("videoList").querySelectorAll(".video-card")]
+    .find((item) => item.dataset.bvid === String(bvid));
+  if (!card) return;
+  card.classList.add("interaction-ready");
+  card.classList.toggle("selected", selected);
+  card.setAttribute("aria-selected", String(selected));
+  const checkbox = card.querySelector(".check");
+  if (checkbox) checkbox.checked = selected;
+}
+
+function updateSelectionMetric() {
+  if (window.BiliMotion) window.BiliMotion.setMetric("metricSelected", app.selected.size);
+  else $("metricSelected").textContent = app.selected.size;
+}
+
+function updateSelectAllControl(items = filteredItems()) {
+  const button = $("selectAllBtn");
+  if (!button) return;
+  const allSelected = items.length > 0 && items.every((item) => app.selected.has(item.bvid));
+  button.disabled = items.length === 0;
+  button.textContent = allSelected ? "取消全选" : "全选当前列表";
+  button.setAttribute("aria-pressed", String(allSelected));
+}
+
+function syncVisibleSelection() {
+  $("videoList").querySelectorAll(".video-card").forEach((card) => {
+    const selected = app.selected.has(card.dataset.bvid);
+    card.classList.add("interaction-ready");
+    card.classList.toggle("selected", selected);
+    card.setAttribute("aria-selected", String(selected));
+    const checkbox = card.querySelector(".check");
+    if (checkbox) checkbox.checked = selected;
+  });
+  updateSelectionMetric();
+  updateSelectAllControl();
+}
+
+function toggleSelectAll() {
+  const items = filteredItems();
+  if (!items.length) return;
+  const allSelected = items.every((item) => app.selected.has(item.bvid));
+  if (allSelected) app.selected.clear();
+  else items.forEach((item) => app.selected.add(item.bvid));
+  syncVisibleSelection();
+}
+
+function clearSelection() {
+  if (!app.selected.size) return;
+  app.selected.clear();
+  syncVisibleSelection();
+}
+
 function toggleSelect(bvid) {
-  if (app.selected.has(bvid)) app.selected.delete(bvid);
-  else app.selected.add(bvid);
-  renderMetrics();
-  updateListVisualState();
+  const selected = !app.selected.has(bvid);
+  if (selected) app.selected.add(bvid);
+  else app.selected.delete(bvid);
+
+  // Selection is a local interaction: update the clicked row immediately.
+  // Full-list state reconciliation remains in the normal refresh path.
+  updateSelectedCard(bvid, selected);
+  updateSelectionMetric();
+  updateSelectAllControl();
+}
+
+function handleVideoCardKeydown(event, card) {
+  if (event.target !== card) return;
+  const cards = [...$("videoList").querySelectorAll(".video-card")];
+  const index = cards.indexOf(card);
+  let nextIndex = -1;
+  if (event.key === "ArrowDown" || event.key === "ArrowRight") nextIndex = Math.min(cards.length - 1, index + 1);
+  if (event.key === "ArrowUp" || event.key === "ArrowLeft") nextIndex = Math.max(0, index - 1);
+  if (event.key === "Home") nextIndex = 0;
+  if (event.key === "End") nextIndex = cards.length - 1;
+  if (nextIndex >= 0 && nextIndex !== index) {
+    event.preventDefault();
+    cards[nextIndex].focus({ preventScroll: true });
+    cards[nextIndex].scrollIntoView({ block: "nearest" });
+    return;
+  }
+  if (event.key === " " || event.key === "Spacebar") {
+    event.preventDefault();
+    toggleSelect(card.dataset.bvid);
+    return;
+  }
+  if (event.key === "Enter") {
+    event.preventDefault();
+    window.open(videoPageUrl(card.dataset.bvid), "_blank", "noopener,noreferrer");
+  }
+}
+
+function isEditableTarget(target) {
+  return Boolean(target?.closest?.("input, textarea, select, [contenteditable='true']"));
 }
 
 function selectedArray() {
@@ -1227,18 +1429,21 @@ function escapeAttr(value) {
 
 function toast(message) {
   const line = document.createElement("div");
+  line.className = "toast";
   line.textContent = message;
-  line.style.cssText = "position:fixed;left:50%;bottom:28px;transform:translateX(-50%);padding:10px 16px;border-radius:999px;background:rgba(20,24,34,.92);border:1px solid rgba(255,255,255,.12);z-index:20";
   document.body.appendChild(line);
+  setTimeout(() => line.classList.add("leaving"), 1500);
   setTimeout(() => line.remove(), 1800);
 }
 
 function showModal(html) {
   $("modalBody").innerHTML = html;
   $("modal").classList.remove("hidden");
+  window.BiliMotion?.openModal($("modal"));
 }
 
 function closeModal() {
+  window.BiliMotion?.closeModal($("modal"));
   $("modal").classList.add("hidden");
   $("modalBody").innerHTML = "";
   if (app.pollingQr) {
@@ -1300,6 +1505,16 @@ function openHelpGuide() {
       </section>
 
       <section>
+        <h3>账号投稿下载</h3>
+        <ol>
+          <li>在顶部切换到“账号投稿”，输入账号名称、UID 或个人空间链接。</li>
+          <li>候选账号会显示头像、名称、粉丝数和 UID，点击正确的账号卡片。</li>
+          <li>确认“当前选择”后，点击“获取该账号投稿”。</li>
+          <li>投稿载入完成后，使用顶部搜索框按标题或 BV 号继续筛选，再选择并下载。</li>
+        </ol>
+      </section>
+
+      <section>
         <h3>筛选和选择视频</h3>
         <ul>
           <li>搜索框：按标题或 BV 号查找。</li>
@@ -1310,6 +1525,7 @@ function openHelpGuide() {
           <li>标记已下载 / 未下载：用于修正历史记录，不会删除本地视频。</li>
           <li>删除已选：只从当前列表移除，不等同于删除 B站收藏夹里的视频。</li>
         </ul>
+        <p><strong>键盘快捷操作：</strong>Ctrl+A 全选当前筛选结果，再按一次取消全选；Ctrl+F 定位搜索框；方向键在当前页视频间移动；Space 切换选择；Enter 打开视频网页；Esc 关闭弹窗、菜单或取消选择。</p>
       </section>
 
       <section>
@@ -1572,6 +1788,11 @@ function bindEvents() {
   $("modeFav").onclick = () => setMode("fav");
   $("modeCreator").onclick = () => setMode("creator");
   $("modeManual").onclick = () => setMode("manual");
+  $("creatorQuery").addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" || event.isComposing) return;
+    event.preventDefault();
+    $("creatorSearchBtn").click();
+  });
   $("creatorSearchBtn").onclick = async () => {
     const query = $("creatorQuery").value.trim();
     if (!query) return toast("请输入账号名称、UID 或主页链接");
@@ -1594,6 +1815,7 @@ function bindEvents() {
       if (app.creatorCandidates.length === 1) {
         app.selectedCreatorMid = String(app.creatorCandidates[0].mid);
       }
+      if (result.warning) toast(`实时搜索失败，已使用缓存：${result.warning}`);
       if (!app.creatorCandidates.length) toast("没有找到匹配账号");
       renderCreatorSource();
       renderGuide();
@@ -1610,8 +1832,10 @@ function bindEvents() {
       }
     }
   };
-  $("creatorResults").onchange = (event) => {
-    app.selectedCreatorMid = event.target.value;
+  $("creatorResults").onclick = (event) => {
+    const candidate = event.target.closest(".creator-candidate");
+    if (!candidate) return;
+    app.selectedCreatorMid = candidate.dataset.creatorMid;
     renderCreatorSource();
     renderGuide();
   };
@@ -1626,6 +1850,7 @@ function bindEvents() {
         body: {
           mid: candidate.mid,
           name: candidate.name,
+          face: candidate.face || "",
         },
       });
       toast("已开始低频获取账号投稿");
@@ -1664,16 +1889,8 @@ function bindEvents() {
     app.page += 1;
     renderListIfNeeded(true);
   };
-  $("selectAllBtn").onclick = () => {
-    filteredItems().forEach((item) => app.selected.add(item.bvid));
-    renderMetrics();
-    renderListIfNeeded(true);
-  };
-  $("clearSelectBtn").onclick = () => {
-    app.selected.clear();
-    renderMetrics();
-    renderListIfNeeded(true);
-  };
+  $("selectAllBtn").onclick = toggleSelectAll;
+  $("clearSelectBtn").onclick = clearSelection;
   $("yearSelect").onchange = (event) => {
     app.selectedYear = event.target.value;
     app.monthFilter = "";
@@ -2054,21 +2271,31 @@ function bindEvents() {
   document.addEventListener("scroll", hideVideoContextMenu, true);
   window.addEventListener("resize", hideVideoContextMenu);
   document.addEventListener("keydown", (event) => {
-    if (event.ctrlKey && event.key.toLowerCase() === "a" && document.activeElement.tagName !== "INPUT") {
+    const shortcutKey = event.ctrlKey || event.metaKey;
+    const key = event.key.toLowerCase();
+    const modalOpen = !$("modal").classList.contains("hidden");
+    if (shortcutKey && key === "a" && !event.repeat && !modalOpen && !isEditableTarget(event.target)) {
       event.preventDefault();
-      filteredItems().forEach((item) => app.selected.add(item.bvid));
-      renderMetrics();
-      renderListIfNeeded(true);
+      toggleSelectAll();
+      return;
     }
-    if (event.ctrlKey && event.key.toLowerCase() === "f") {
+    if (shortcutKey && key === "f" && !modalOpen) {
       event.preventDefault();
       $("searchInput").focus();
+      $("searchInput").select();
+      return;
     }
     if (event.key === "Escape") {
+      if (modalOpen) {
+        closeModal();
+        return;
+      }
+      if (!$("videoContextMenu").classList.contains("hidden")) {
+        hideVideoContextMenu();
+        return;
+      }
       hideVideoContextMenu();
-      app.selected.clear();
-      renderMetrics();
-      renderListIfNeeded(true);
+      clearSelection();
     }
   });
 }

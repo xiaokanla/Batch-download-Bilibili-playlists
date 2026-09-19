@@ -2,13 +2,15 @@
 
 BiliDownloader Studio 是一个面向 B 站收藏夹批量下载、历史去重、Eagle 视频导入和视频套图封面生成的本地 Web 工具。
 
-> 当前源码版本：`v1.4.3-eagle-tag-repair`
+> 当前源码版本：`v1.4.4`
 
 ## 下载
 
 普通用户建议直接下载 Release 里的正式版压缩包，解压后运行 `BiliDownloaderStudio.exe`，不需要配置 Python 环境。
 
-最新正式包请以 GitHub Release 页面为准；校验值请下载同一 Release 中的 `SHA256SUMS.txt`。
+最新正式包请以 GitHub Release 页面为准。正式包统一命名为
+`BiliDownloaderStudio-vX.Y.Z-windows-x64.zip`，校验文件为同名的
+`.sha256` 文件。
 
 ## 主要功能
 
@@ -77,6 +79,7 @@ http://127.0.0.1:8765
 
 ## 文档
 
+- [更新日志](CHANGELOG.md)
 - [用户指南](docs/USER_GUIDE.md)
 - [开发者指南](docs/DEVELOPER_GUIDE.md)
 - [发布指南](docs/RELEASE_GUIDE.md)
@@ -97,6 +100,13 @@ http://127.0.0.1:8765
 - 任何 Cookie、账号、私人收藏夹缓存
 
 ## 最新修复
+
+### v1.4.4
+
+- 重构账号投稿界面，账号搜索、候选账号选择和投稿获取形成独立工作流。
+- 候选账号改为头像卡片，直接显示名称、粉丝数和 UID。
+- 新增轻量界面动效、即时列表选择以及 Ctrl+A、Ctrl+F、方向键、Space、Enter、Esc 等快捷操作。
+- 修复账号搜索遇到空响应、非 JSON 风控页时显示底层解析错误的问题，并支持旧缓存降级。
 
 ### v1.3.0-tag-cloud
 

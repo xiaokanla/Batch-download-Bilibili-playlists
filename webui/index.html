@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>BiliDownloader Studio</title>
-    <link rel="stylesheet" href="/styles.css?v=20260830-tag-graph-ui" />
+    <link rel="stylesheet" href="/styles.css?v=20260920-premium-motion" />
   </head>
   <body>
     <div class="shell">
@@ -54,15 +54,18 @@
         </section>
 
         <section id="creatorSourcePanel" class="panel creator-source-panel hidden">
-          <div class="eyebrow">第 2 步 · 账号投稿</div>
-          <input id="creatorQuery" class="input" placeholder="账号名称、UID 或主页链接" />
-          <button id="creatorSearchBtn" class="btn ghost full">查找账号</button>
-          <select id="creatorResults" class="select" disabled>
-            <option value="">先查找并选择账号</option>
-          </select>
-          <div class="progress slim"><span id="creatorSyncProgress"></span></div>
-          <button id="creatorSyncBtn" class="btn primary full" disabled>获取投稿列表</button>
-          <div id="creatorSyncHint" class="helper-text">获取后可用顶部搜索栏筛选标题或 BV 号。</div>
+          <div class="eyebrow">投稿来源</div>
+          <div class="creator-rail-source">
+            <div id="creatorRailAvatar" class="creator-avatar creator-avatar-small">UP</div>
+            <div>
+              <strong id="creatorRailTitle">尚未选择账号</strong>
+              <span id="creatorRailMeta">等待检索</span>
+            </div>
+          </div>
+          <div class="creator-rail-status">
+            <span>投稿列表</span>
+            <strong id="creatorRailCount">0</strong>
+          </div>
         </section>
 
         <section class="panel">
@@ -98,6 +101,39 @@
           </div>
         </header>
 
+        <section id="creatorWorkbench" class="creator-workbench hidden">
+          <div class="creator-workbench-head">
+            <div>
+              <div class="eyebrow">账号投稿来源</div>
+              <h3>查找创作者</h3>
+            </div>
+            <div id="creatorCandidateCount" class="creator-result-count">输入名称、UID 或主页链接</div>
+          </div>
+
+          <div class="creator-search-row">
+            <input id="creatorQuery" class="input" placeholder="账号名称、UID 或 space.bilibili.com 链接" autocomplete="off" />
+            <button id="creatorSearchBtn" class="btn primary">查找账号</button>
+          </div>
+
+          <div id="creatorResults" class="creator-candidates" role="listbox" aria-label="候选账号">
+            <div class="creator-empty">搜索结果会显示在这里</div>
+          </div>
+
+          <div id="creatorSelectedPanel" class="creator-selected hidden">
+            <div id="creatorSelectedAvatar" class="creator-avatar">UP</div>
+            <div class="creator-selected-copy">
+              <span>当前选择</span>
+              <strong id="creatorSelectedName">未选择账号</strong>
+              <small id="creatorSelectedMeta"></small>
+            </div>
+            <button id="creatorSyncBtn" class="btn primary" disabled>获取该账号投稿</button>
+          </div>
+          <div class="creator-progress-line">
+            <div class="progress slim"><span id="creatorSyncProgress"></span></div>
+            <div id="creatorSyncHint" class="helper-text">选择候选账号后即可获取投稿。</div>
+          </div>
+        </section>
+
         <section class="guide card" id="beginnerGuide">
           <div class="guide-main">
             <div class="eyebrow">新手引导</div>
@@ -117,10 +153,10 @@
         </section>
 
         <section class="metrics">
-          <div class="metric card"><span>当前列表</span><strong id="metricTotal">0</strong></div>
+          <div class="metric card"><span id="metricTotalLabel">当前列表</span><strong id="metricTotal">0</strong></div>
           <div class="metric card"><span>已下载</span><strong id="metricDone">0</strong></div>
           <div class="metric card"><span>已选择</span><strong id="metricSelected">0</strong></div>
-          <div class="metric card"><span>同步状态</span><strong id="metricSync">Idle</strong></div>
+          <div class="metric card"><span id="metricSyncLabel">同步状态</span><strong id="metricSync">Idle</strong></div>
         </section>
 
         <section class="toolbar card">
@@ -136,7 +172,7 @@
           </div>
         </section>
 
-        <section id="videoList" class="video-list"></section>
+        <section id="videoList" class="video-list" role="listbox" aria-label="视频列表" aria-multiselectable="true"></section>
       </main>
       <div id="inspectorResizer" class="layout-resizer" role="separator" aria-orientation="vertical" aria-label="调整右侧栏宽度" title="拖动调整右侧栏宽度"></div>
 
@@ -314,6 +350,7 @@
       <button id="openVideoPageBtn" type="button" role="menuitem">打开视频网页</button>
       <button id="copyVideoBvidBtn" type="button" role="menuitem">复制 BV 号</button>
     </div>
-    <script src="/app.js?v=20260830-tag-graph-ui"></script>
+    <script src="/motion.js?v=20260920-premium-motion"></script>
+    <script src="/app.js?v=20260920-premium-motion"></script>
   </body>
 </html>

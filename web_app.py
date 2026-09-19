@@ -34,7 +34,7 @@ APP_DIR = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else 
 WEB_DIR = os.path.join(RESOURCE_DIR, "webui")
 DEFAULT_USERDATA_DIR = os.path.join(APP_DIR, "userdata")
 BOOTSTRAP_SETTINGS_PATH = os.path.join(DEFAULT_USERDATA_DIR, "app_settings.json")
-APP_VERSION = "1.4.3-eagle-tag-repair"
+APP_VERSION = "1.4.4"
 APP_FLAVOR = "release"
 
 
@@ -378,6 +378,31 @@ class WebBiliApp:
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
         os.replace(tmp, path)
+
+    def _request_bili_json(self, url, action, **kwargs):
+        """Issue one conservative Bilibili request and validate its JSON body."""
+        try:
+            response = self.mgr.session.get(url, **kwargs)
+        except requests.RequestException as exc:
+            raise RuntimeError(f"{action}请求失败，请检查网络后稍后重试") from exc
+
+        if response.status_code in (403, 412, 429):
+            raise RuntimeError(f"B 站暂时限制了{action}，请稍后再试")
+        if response.status_code >= 500:
+            raise RuntimeError(f"B 站{action}服务暂时不可用，请稍后再试")
+        if response.status_code >= 400:
+            raise RuntimeError(f"{action}请求失败（HTTP {response.status_code}）")
+
+        body = (response.text or "").strip()
+        if not body:
+            raise RuntimeError(f"B 站未返回{action}数据，请稍后再试")
+        try:
+            data = json.loads(body)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(f"B 站{action}返回异常，可能遇到临时风控，请稍后再试") from exc
+        if not isinstance(data, dict):
+            raise RuntimeError(f"B 站{action}返回了无法识别的数据")
+        return data
 
     def _valid_file(self, path):
         return bool(path) and os.path.isfile(str(path))
@@ -1277,8 +1302,9 @@ class WebBiliApp:
         with self.creator_search_lock:
             now = time.time()
             cached = self.creator_search_cache.get(cache_key)
+            cached_results = cached.get("results") if isinstance(cached, dict) else None
             if isinstance(cached, dict) and now - float(cached.get("time") or 0) < cache_ttl:
-                results = cached.get("results")
+                results = cached_results
                 if isinstance(results, list):
                     self.log(f"账号检索命中缓存：{query} · {len(results)} 个候选")
                     return {"results": results, "cached": True}
@@ -1296,11 +1322,18 @@ class WebBiliApp:
 
             if mid_match:
                 mid = mid_match.group(1)
-                data = self.mgr.session.get(
-                    "https://api.bilibili.com/x/web-interface/card",
-                    params={"mid": mid},
-                    timeout=15,
-                ).json()
+                try:
+                    data = self._request_bili_json(
+                        "https://api.bilibili.com/x/web-interface/card",
+                        "账号查询",
+                        params={"mid": mid},
+                        timeout=15,
+                    )
+                except RuntimeError as exc:
+                    if isinstance(cached_results, list):
+                        self.log(f"账号查询失败，使用旧缓存：{query} · {exc}")
+                        return {"results": cached_results[:20], "cached": True, "stale": True, "warning": str(exc)}
+                    raise
                 if data.get("code") in (-412, -352, 412, 352):
                     raise RuntimeError("B 站暂时限制了账号查询，请稍后再试")
                 if data.get("code") != 0:
@@ -1315,11 +1348,18 @@ class WebBiliApp:
                     "fans": int(card.get("fans") or 0),
                 }]
             else:
-                data = self.mgr.session.get(
-                    "https://api.bilibili.com/x/web-interface/search/type",
-                    params={"search_type": "bili_user", "keyword": query, "page": 1, "page_size": 10},
-                    timeout=15,
-                ).json()
+                try:
+                    data = self._request_bili_json(
+                        "https://api.bilibili.com/x/web-interface/search/type",
+                        "账号搜索",
+                        params={"search_type": "bili_user", "keyword": query, "page": 1, "page_size": 10},
+                        timeout=15,
+                    )
+                except RuntimeError as exc:
+                    if isinstance(cached_results, list):
+                        self.log(f"账号搜索失败，使用旧缓存：{query} · {exc}")
+                        return {"results": cached_results[:20], "cached": True, "stale": True, "warning": str(exc)}
+                    raise
                 if data.get("code") in (-412, -352, 412, 352):
                     raise RuntimeError("B 站暂时限制了账号搜索，请稍后再试")
                 if data.get("code") != 0:
@@ -1350,6 +1390,7 @@ class WebBiliApp:
     def sync_creator_videos(self, payload):
         mid = re.sub(r"\D", "", str(payload.get("mid") or ""))
         name = re.sub(r"\s+", " ", str(payload.get("name") or "").strip())[:80]
+        face = self.normalize_url(str(payload.get("face") or "").strip())
         if not mid:
             raise RuntimeError("请先选择一个账号")
         with self.lock:
@@ -1401,7 +1442,12 @@ class WebBiliApp:
                     }
                     if img_key and sub_key:
                         params = WbiSigner.enc_wbi(params, img_key, sub_key)
-                    response = self.mgr.session.get(api_url, params=params, timeout=15).json()
+                    response = self._request_bili_json(
+                        api_url,
+                        "投稿列表读取",
+                        params=params,
+                        timeout=15,
+                    )
                     if response.get("code") in (-412, -352, 412, 352):
                         raise RuntimeError("疑似触发风控，已停止获取账号投稿")
                     if response.get("code") != 0:
@@ -1431,7 +1477,7 @@ class WebBiliApp:
                 videos = unique_videos
                 with self.lock:
                     self.creator_videos = videos
-                    self.creator_source = {"mid": mid, "name": name or mid, "total": total}
+                    self.creator_source = {"mid": mid, "name": name or mid, "face": face, "total": total}
                     self.creator_sync_progress = 1
                 self.log(f"账号投稿获取完成：{len(videos)} 个视频")
             except Exception as exc:
@@ -2844,6 +2890,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_file(os.path.join(WEB_DIR, "index.html"), "text/html; charset=utf-8")
             if path == "/styles.css":
                 return self.send_file(os.path.join(WEB_DIR, "styles.css"), "text/css; charset=utf-8")
+            if path == "/motion.js":
+                return self.send_file(os.path.join(WEB_DIR, "motion.js"), "application/javascript; charset=utf-8")
             if path == "/app.js":
                 return self.send_file(os.path.join(WEB_DIR, "app.js"), "application/javascript; charset=utf-8")
             if path == "/api/state":
