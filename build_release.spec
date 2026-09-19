@@ -32,6 +32,7 @@ datas += packaged_eagle_files()
 
 binaries = []
 binaries += include_if_exists(ROOT_PATH / "ffmpeg.exe")
+binaries += include_if_exists(ROOT_PATH / "ffprobe.exe")
 binaries += include_if_exists(ROOT_PATH / "aria2c.exe")
 
 hiddenimports = [

@@ -3,58 +3,102 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>标签蛛网图</title>
-  <link rel="stylesheet" href="styles.css">
+  <title>标签分析</title>
+  <link rel="stylesheet" href="styles.css?v=20260902-8">
 </head>
 <body>
   <main class="app-shell">
-    <header class="topbar">
-      <div>
-        <div class="title-line">
-          <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
-          <div>
-            <div class="eyebrow">EAGLE PLUGIN / INSIGHT</div>
-            <h1>标签蛛网图</h1>
-            <p id="libraryLine" class="subtle">正在连接当前 Eagle 资源库...</p>
-          </div>
-        </div>
+    <header class="window-bar">
+      <div class="window-brand">
+        <img class="window-logo" src="logo.png" alt="">
+        <strong>标签分析</strong>
+        <span id="libraryLine" class="subtle">正在连接当前 Eagle 资源库...</span>
       </div>
-      <div class="top-actions">
+      <div class="window-actions">
         <span id="cacheBadge" class="status-badge"><b></b>准备中</span>
-        <button id="refreshButton" class="button primary" type="button">刷新库缓存</button>
+        <button id="tagManagerButton" class="button ghost" type="button">标签管理</button>
+        <button id="refreshButton" class="button primary" type="button">刷新缓存</button>
+        <button id="windowMinimizeButton" class="window-button" type="button" aria-label="最小化" title="最小化">−</button>
+        <button id="windowMaximizeButton" class="window-button" type="button" aria-label="最大化" title="最大化">□</button>
+        <button id="windowCloseButton" class="window-button close" type="button" aria-label="关闭" title="关闭">×</button>
       </div>
     </header>
     <section class="toolbar" aria-label="分析设置">
       <label><span>分析范围</span><select id="scopeSelect"><option value="all">整个资源库</option><option value="folder">当前文件夹</option><option value="selected">当前选中项目</option></select></label>
       <label><span>标签来源</span><select id="groupSelect"><option value="all">全部实际使用的标签</option></select></label>
       <label class="search-label"><span>搜索标签</span><input id="tagSearch" type="search" placeholder="输入标签名称"></label>
+      <button id="showMoreTagsButton" class="button ghost" type="button">显示更多</button>
+      <button id="refreshTagsButton" class="button ghost" type="button">换一批</button>
+      <button id="arrangeGraphButton" class="button ghost" type="button">自动整理</button>
       <button id="resetViewButton" class="button ghost" type="button">重置视图</button>
     </section>
     <section class="notice-row">
-      <div id="message" class="message">插件只读取 Eagle 数据，不会修改项目、标签或文件夹。</div>
+      <div id="message" class="message">标签分析只读取 Eagle 数据；标签管理会在确认后合并标签。</div>
       <div id="statsLine" class="stats-line">尚未载入</div>
     </section>
     <section class="content-grid">
       <div class="graph-panel">
-        <div class="panel-heading"><div><div class="eyebrow">RELATION MAP</div><h2>标签关联</h2></div><div class="graph-hint">拖动平移 · 滚轮缩放 · 悬停高亮</div></div>
+        <div class="panel-heading"><h2>标签关系</h2><div class="graph-hint">拖动标签调整位置 · 空白处平移 · 滚轮缩放</div></div>
         <div id="graphHost" class="graph-host"><div class="loading">正在准备图形...</div></div>
       </div>
       <aside class="side-panel">
-        <div class="panel-heading"><div><div class="eyebrow">TAG INDEX</div><h2>标签排行</h2></div><span id="tagCount" class="count-pill">0</span></div>
+        <div class="panel-heading"><h2>标签排行</h2><span id="tagCount" class="count-pill">0</span></div>
         <div id="tagList" class="tag-list"><div class="empty">载入后显示实际使用中的标签。</div></div>
-        <div class="selection-box"><div class="eyebrow">当前选择</div><strong id="selectionTitle">未选择标签</strong><span id="selectionDetail">点击节点或列表标签，可在 Eagle 中查看对应素材。</span><button id="clearSelectionButton" class="button ghost small" type="button">清除选择</button></div>
-        <section id="resultSection" class="result-section hidden">
+        <div class="selection-box">
+          <div class="eyebrow">当前选择</div>
+          <strong id="selectionTitle">未选择标签</strong>
+          <span id="selectionDetail">点击节点或列表标签，查看对应项目标题和 tags。</span>
+          <button id="clearSelectionButton" class="button ghost small" type="button">清除选择</button>
+        </div>
+        <section id="titleTagSection" class="title-tag-section hidden">
           <div class="result-heading">
-            <div><div class="eyebrow">MATCHED ITEMS</div><strong>对应视频</strong></div>
-            <span id="resultCount" class="count-pill">0</span>
+            <div><div class="eyebrow">ITEM TITLES</div><strong>对应项目</strong></div>
+            <span id="titleTagCount" class="count-pill">0</span>
           </div>
-          <div id="resultList" class="result-list"></div>
+          <div id="titleTagList" class="title-tag-list"></div>
         </section>
       </aside>
     </section>
-    <footer class="footer"><span id="footerStatus">标签关联按同一项目中的共现关系计算。</span><span>缓存保存在 Eagle 插件本地，不上传到网络。</span></footer>
+    <footer class="footer"><span id="footerStatus">标签关联按同一项目中的共现关系计算。</span><span id="buildInfo">v0.3.3 · 2026.09.02</span></footer>
   </main>
-  <script src="js/plugin.js"></script>
-  <script src="js/app.js"></script>
+  <div id="tagManagerModal" class="modal-backdrop hidden" role="presentation">
+    <section class="tag-manager-dialog" role="dialog" aria-modal="true" aria-labelledby="tagManagerTitle">
+      <header class="tag-manager-header">
+        <div>
+          <div class="eyebrow">TAG MANAGEMENT</div>
+          <h2 id="tagManagerTitle">标签管理</h2>
+          <p>将一个或多个标签合并到同一个目标标签，Eagle 会同步更新所有使用它们的项目。</p>
+        </div>
+        <button id="tagManagerCloseButton" class="window-button" type="button" aria-label="关闭标签管理" title="关闭">×</button>
+      </header>
+      <form id="tagMergeForm" class="tag-merge-form">
+        <label>
+          <span>待合并标签（可多个）</span>
+          <input id="tagMergeSource" autocomplete="off" placeholder="例如：pv, Pv, pｖ" required>
+          <div id="tagMergeSourceSuggestions" class="tag-input-suggestions hidden"></div>
+        </label>
+        <label>
+          <span>保留为</span>
+          <input id="tagMergeTarget" list="tagManagerOptions" autocomplete="off" placeholder="例如：PV" required>
+        </label>
+        <datalist id="tagManagerOptions"></datalist>
+        <div class="tag-merge-actions">
+          <span id="tagMergeStatus" class="tag-merge-status">点击下方标签可多选；也可以用逗号、分号或换行分隔。</span>
+          <label class="confirm-toggle"><input id="tagMergeConfirmToggle" type="checkbox" checked><span>合并前确认</span></label>
+          <button id="tagMergeSubmitButton" class="button primary" type="submit">合并标签</button>
+        </div>
+      </form>
+      <section class="tag-merge-suggestions">
+        <div class="tag-manager-section-heading">
+          <div><strong>可能重复的标签</strong><span>点击标签加入待合并列表；点击目标标签设置保留名称</span></div>
+          <span id="tagManagerCount" class="count-pill">0</span>
+        </div>
+        <div id="tagMergeSuggestions" class="tag-merge-suggestion-list"></div>
+      </section>
+      <footer class="tag-manager-footer">合并不可撤销。标签群组、常用标签与历史标签也会随 Eagle 一同更新。</footer>
+    </section>
+  </div>
+  <script src="js/plugin.js?v=20260920-1"></script>
+  <script src="js/app.js?v=20260920-1"></script>
 </body>
 </html>

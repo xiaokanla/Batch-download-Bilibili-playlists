@@ -155,18 +155,36 @@ class DownloadWorker:
 
     def _verify_audio_stream(self, file_path):
         """验证文件是否包含音频流"""
+        ffprobe = self._find_local_ffprobe()
+        if ffprobe:
+            try:
+                result = subprocess.run(
+                    [ffprobe, '-v', 'quiet', '-select_streams', 'a',
+                     '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', file_path],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    **subprocess_no_window_kwargs(),
+                )
+                if result.returncode == 0:
+                    return 'audio' in result.stdout.lower()
+            except (OSError, subprocess.SubprocessError):
+                pass
+
+        # ffprobe is optional in portable builds. FFmpeg can still verify that
+        # the first audio stream exists by copying a tiny segment to the null muxer.
         try:
             result = subprocess.run(
-                [self._find_local_ffprobe(), '-v', 'quiet', '-select_streams', 'a',
-                 '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', file_path],
+                [self._find_local_ffmpeg(), '-v', 'error', '-i', file_path,
+                 '-map', '0:a:0', '-c', 'copy', '-t', '0.1', '-f', 'null', '-'],
                 capture_output=True,
                 text=True,
                 timeout=30,
                 **subprocess_no_window_kwargs(),
             )
-            return 'audio' in result.stdout.lower()
-        except:
-            # 如果 ffprobe 失败，假设文件有效
+            return result.returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            # Do not reject a completed download when neither probe tool can run.
             return True
 
     def _find_local_ffmpeg(self):
@@ -191,7 +209,7 @@ class DownloadWorker:
         if os.path.exists(local_ffprobe):
             return local_ffprobe
         ffprobe_cmd = shutil.which('ffprobe')
-        return ffprobe_cmd if ffprobe_cmd else 'ffprobe'
+        return ffprobe_cmd
 
     def _find_recent_media_file(self, since_ts, exts=('.mp4', '.mkv', '.webm', '.flv', '.m4a', '.mp3')):
         try:

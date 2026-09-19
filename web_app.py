@@ -812,15 +812,16 @@ class WebBiliApp:
             shutil.which(executable_name) or "",
         ]
         seen = set()
+        unusable = []
         for candidate in candidates:
             if not candidate or candidate in seen:
                 continue
             seen.add(candidate)
             if os.path.isfile(candidate) or shutil.which(candidate):
-                version = ""
+                version_arg = "--version" if executable_name == "aria2c" else "-version"
                 try:
                     proc = subprocess.run(
-                        [candidate, "-version"],
+                        [candidate, version_arg],
                         stdout=subprocess.PIPE,
                         stderr=subprocess.STDOUT,
                         text=True,
@@ -829,22 +830,28 @@ class WebBiliApp:
                         timeout=4,
                         creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
                     )
-                    version = (proc.stdout or "").splitlines()[0][:120] if proc.stdout else ""
-                except Exception:
-                    version = "已找到，但版本信息读取失败"
-                return {
-                    "key": key,
-                    "level": "ok",
-                    "title": f"{key} 可用",
-                    "detail": candidate,
-                    "extra": version,
-                }
+                    if proc.returncode == 0:
+                        version = (proc.stdout or "").splitlines()[0][:120] if proc.stdout else ""
+                        return {
+                            "key": key,
+                            "level": "ok",
+                            "title": f"{key} 可用",
+                            "detail": candidate,
+                            "extra": version,
+                        }
+                    unusable.append(candidate)
+                except (OSError, subprocess.SubprocessError):
+                    unusable.append(candidate)
         level = "error" if required else "warn"
         return {
             "key": key,
             "level": level,
-            "title": f"{key} 未检测到",
-            "detail": "请在路径设置中选择可执行文件，或把它放在程序目录旁边。",
+            "title": f"{key} {'不可用' if unusable else '未检测到'}",
+            "detail": (
+                "检测到文件，但无法运行；请在路径设置中选择正确的可执行文件。"
+                if unusable else
+                "请在路径设置中选择可执行文件，或把它放在程序目录旁边。"
+            ),
             "extra": "",
         }
 
@@ -884,7 +891,7 @@ class WebBiliApp:
             index = dict(self.eagle_index)
         items = [
             self._tool_diagnostic("FFmpeg", "ffmpeg", settings.get("ffmpegPath"), "ffmpeg.exe", required=True),
-            self._tool_diagnostic("FFprobe", "ffprobe", settings.get("ffprobePath"), "ffprobe.exe", required=True),
+            self._tool_diagnostic("FFprobe（可选）", "ffprobe", settings.get("ffprobePath"), "ffprobe.exe", required=False),
             self._tool_diagnostic("Aria2", "aria2c", settings.get("aria2Path"), "aria2c.exe", required=False),
             self._dir_diagnostic("dataDir", "程序数据目录", settings.get("dataDir"), required=True),
             self._dir_diagnostic("downloadDir", "默认下载目录", settings.get("downloadDir"), required=False),

@@ -419,9 +419,14 @@ h3 {
   align-items: center;
   gap: 18px;
   padding: 14px 16px;
+  min-width: 0;
   background:
     linear-gradient(135deg, rgba(251, 114, 153, 0.13), rgba(109, 200, 255, 0.09)),
     rgba(22, 27, 38, 0.86);
+}
+
+.guide-main {
+  min-width: 0;
 }
 
 .guide-main p {
@@ -430,8 +435,9 @@ h3 {
 
 .guide-steps {
   display: grid;
-  grid-template-columns: repeat(4, 72px);
+  grid-template-columns: repeat(4, minmax(58px, 72px));
   gap: 8px;
+  min-width: 0;
 }
 
 .guide-step {
@@ -481,7 +487,8 @@ h3 {
 .guide-actions {
   display: grid;
   gap: 8px;
-  min-width: 154px;
+  width: 154px;
+  min-width: 0;
 }
 
 .metric {
@@ -1623,5 +1630,37 @@ h3 {
 
   .help-hero {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (min-width: 1181px) and (max-width: 1360px) {
+  .shell {
+    grid-template-columns:
+      minmax(230px, min(270px, var(--rail-width, 292px)))
+      8px
+      minmax(440px, 1fr)
+      8px
+      minmax(330px, min(380px, var(--inspector-width, 420px)));
+    gap: 10px;
+    padding: 12px;
+  }
+
+  .guide {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .guide-steps {
+    grid-template-columns: repeat(4, minmax(64px, 1fr));
+  }
+
+  .guide-actions {
+    display: flex;
+    flex-wrap: wrap;
+    width: auto;
+  }
+
+  .guide-actions .btn {
+    flex: 1 1 150px;
   }
 }

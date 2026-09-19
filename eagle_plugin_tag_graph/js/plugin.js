@@ -4,7 +4,7 @@ window.pluginReady = new Promise((resolve) => {
     eagle.onPluginCreate((plugin) => resolve(plugin));
     return;
   }
-  resolve({ manifest: { name: "标签蛛网图", version: "demo" }, path: "" });
+  resolve({ manifest: { name: "标签分析", version: "demo" }, path: "" });
 });
 
 if (window.eagle && typeof eagle.onLibraryChanged === "function") {
