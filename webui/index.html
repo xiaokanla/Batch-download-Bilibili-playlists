@@ -4,6 +4,15 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>BiliDownloader Studio</title>
+    <script>
+      try {
+        const savedTheme = localStorage.getItem("bili-ui-theme");
+        const preferredTheme = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+        document.documentElement.dataset.theme = savedTheme || preferredTheme;
+      } catch (_) {
+        document.documentElement.dataset.theme = "dark";
+      }
+    </script>
     <link rel="stylesheet" href="/styles.css?v=20260920-premium-motion" />
   </head>
   <body>
@@ -32,8 +41,11 @@
         <section id="favSourcePanel" class="panel fav-source-panel">
           <div class="eyebrow">第 2 步 · 选择收藏夹</div>
           <div id="favDropdown" class="dropdown">
-            <button id="favDropdownBtn" class="dropdown-btn" type="button">
-              <span id="favDropdownLabel">请选择收藏夹</span>
+            <button id="favDropdownBtn" class="dropdown-btn" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="favDropdownMenu">
+              <span class="fav-dropdown-copy">
+                <strong id="favDropdownLabel">请选择收藏夹</strong>
+                <small id="favDropdownCount">尚未读取收藏夹</small>
+              </span>
               <span class="chevron">⌄</span>
             </button>
           </div>
@@ -70,7 +82,7 @@
 
         <section class="panel">
           <div class="eyebrow">筛选</div>
-          <select id="durationFilter" class="select">
+          <select id="durationFilter" class="select" data-select-label="视频时长">
             <option>全部时长</option>
             <option>&lt;1分钟</option>
             <option>1-3分钟</option>
@@ -85,7 +97,8 @@
       <div id="railResizer" class="layout-resizer" role="separator" aria-orientation="vertical" aria-label="调整左侧栏宽度" title="拖动调整左侧栏宽度"></div>
 
       <main class="workspace">
-        <header class="top glass">
+        <div id="workspaceControls" class="workspace-controls">
+          <header class="top glass">
           <div>
             <div class="eyebrow">本地 Web UI</div>
             <h2 id="workbenchTitle">收藏夹下载工作台</h2>
@@ -99,9 +112,13 @@
             <button id="modeCreator">账号投稿</button>
             <button id="modeManual">手动</button>
           </div>
-        </header>
+            <div class="top-actions">
+              <button id="themeToggle" class="icon-btn theme-toggle" type="button" title="切换到浅色主题" aria-label="切换到浅色主题">☀</button>
+              <button id="workspaceControlsToggle" class="icon-btn workspace-controls-toggle" type="button" title="收起控制区" aria-label="收起控制区">⌃</button>
+            </div>
+          </header>
 
-        <section id="creatorWorkbench" class="creator-workbench hidden">
+          <section id="creatorWorkbench" class="creator-workbench hidden">
           <div class="creator-workbench-head">
             <div>
               <div class="eyebrow">账号投稿来源</div>
@@ -132,9 +149,9 @@
             <div class="progress slim"><span id="creatorSyncProgress"></span></div>
             <div id="creatorSyncHint" class="helper-text">选择候选账号后即可获取投稿。</div>
           </div>
-        </section>
+          </section>
 
-        <section class="guide card" id="beginnerGuide">
+          <section class="guide card" id="beginnerGuide">
           <div class="guide-main">
             <div class="eyebrow">新手引导</div>
             <h3 id="guideTitle">先登录 B站，再同步你的收藏夹</h3>
@@ -150,16 +167,16 @@
             <button id="guidePrimaryBtn" class="btn primary">去登录</button>
             <button id="guideHelpBtn" class="btn ghost">打开使用指南</button>
           </div>
-        </section>
+          </section>
 
-        <section class="metrics">
+          <section class="metrics">
           <div class="metric card"><span id="metricTotalLabel">当前列表</span><strong id="metricTotal">0</strong></div>
           <div class="metric card"><span>已下载</span><strong id="metricDone">0</strong></div>
           <div class="metric card"><span>已选择</span><strong id="metricSelected">0</strong></div>
           <div class="metric card"><span id="metricSyncLabel">同步状态</span><strong id="metricSync">Idle</strong></div>
-        </section>
+          </section>
 
-        <section class="toolbar card">
+          <section class="toolbar card">
           <button id="selectAllBtn" class="btn ghost">全选当前列表</button>
           <button id="clearSelectBtn" class="btn ghost">取消选择</button>
           <button id="markDoneBtn" class="btn ghost">标记已下载</button>
@@ -167,28 +184,36 @@
           <button id="deleteBtn" class="btn danger">删除已选</button>
           <div class="pager">
             <button id="prevPage" class="btn ghost">‹</button>
-            <span id="pageInfo">Page 1 / 1</span>
+            <label class="page-jump" for="pageInput">
+              <span>Page</span>
+              <input id="pageInput" type="number" min="1" max="1" value="1" inputmode="numeric" aria-label="输入要跳转的页数" />
+              <span>/</span>
+              <span id="pageTotal">1</span>
+            </label>
             <button id="nextPage" class="btn ghost">›</button>
           </div>
-        </section>
+          </section>
+        </div>
+
+        <div id="workspaceControlsResizer" class="workspace-controls-resizer" role="separator" aria-orientation="horizontal" aria-label="调整控制区高度" title="拖动调整高度，双击恢复自适应" tabindex="0"></div>
 
         <section id="videoList" class="video-list" role="listbox" aria-label="视频列表" aria-multiselectable="true"></section>
       </main>
       <div id="inspectorResizer" class="layout-resizer" role="separator" aria-orientation="vertical" aria-label="调整右侧栏宽度" title="拖动调整右侧栏宽度"></div>
 
       <aside class="inspector glass">
-        <section class="panel chart-panel">
+        <section class="panel chart-panel" data-collapse-key="overview" data-collapsed-default="false">
           <div class="chart-head">
             <div>
               <div class="eyebrow">数据概览</div>
               <div id="chartTitle" class="chart-title">月份分布</div>
             </div>
-            <select id="yearSelect" class="select compact"></select>
+            <select id="yearSelect" class="select compact" data-select-label="年份"></select>
           </div>
           <div id="monthChart" class="month-chart"></div>
         </section>
 
-        <section class="panel tag-cloud-panel">
+        <section class="panel tag-cloud-panel" data-collapse-key="tags" data-collapsed-default="true">
           <div class="panel-head">
             <div>
               <div class="eyebrow">标签分析</div>
@@ -200,13 +225,13 @@
             </div>
           </div>
           <div class="tag-cloud-controls">
-            <select id="tagRange" class="select compact">
+            <select id="tagRange" class="select compact" data-select-label="标签时间范围">
               <option value="3m">近 3 个月</option>
               <option value="6m">近 6 个月</option>
               <option value="12m" selected>近 1 年</option>
               <option value="month">指定月份</option>
             </select>
-            <select id="tagMonth" class="select compact hidden"></select>
+            <select id="tagMonth" class="select compact hidden" data-select-label="指定月份"></select>
           </div>
           <label class="toggle compact-toggle"><input id="tagDownloadedOnly" type="checkbox" /> 仅已下载</label>
           <div class="row gap">
@@ -220,7 +245,7 @@
           </div>
         </section>
 
-        <section class="panel diagnostics-panel">
+        <section class="panel diagnostics-panel" data-collapse-key="diagnostics" data-collapsed-default="true">
           <div class="panel-head">
             <div>
               <div class="eyebrow">环境诊断</div>
@@ -233,13 +258,13 @@
           </div>
         </section>
 
-        <section class="panel download-panel">
+        <section class="panel download-panel" data-collapse-key="download" data-collapsed-default="false">
           <div class="eyebrow">第 3 步 · 下载选中的视频</div>
           <div class="section-note">在中间列表勾选视频后，回到这里选择保存位置并开始下载。</div>
           <input id="saveDir" class="input" placeholder="保存目录" />
           <button id="chooseDirBtn" class="btn ghost full">选择下载目录</button>
           <div class="grid2">
-            <select id="quality" class="select">
+            <select id="quality" class="select" data-select-label="视频清晰度">
               <option>1080</option>
               <option>720</option>
               <option>480</option>
@@ -263,12 +288,12 @@
           </div>
         </section>
 
-        <section class="panel eagle-box">
+        <section class="panel eagle-box" data-collapse-key="eagle" data-collapsed-default="true">
           <div class="eyebrow">第 4 步 · 导入 Eagle（可选）</div>
           <div class="section-note">先下载视频，再打开 Eagle，最后把视频和封面套图一起导入。</div>
           <input id="eagleLibrary" class="input" placeholder="Eagle .library 目录" />
           <button id="chooseEagleBtn" class="btn ghost full">选择 Eagle 库</button>
-          <select id="eagleFolder" class="select eagle-folder-select">
+          <select id="eagleFolder" class="select eagle-folder-select" data-select-label="Eagle 导入文件夹" data-select-search="true">
             <option value="">导入到 Eagle 默认位置</option>
           </select>
           <details class="advanced-tools eagle-options">
@@ -277,7 +302,7 @@
             <label class="toggle"><input id="deleteAfterEagle" type="checkbox" checked /> 导入成功后删除本地视频</label>
             <label class="toggle"><input id="useDanmakuEagle" type="checkbox" checked /> 根据弹幕峰值优化抽帧</label>
             <label class="toggle"><input id="syncBiliTagsEagle" type="checkbox" checked /> 导入时同步 B 站标签</label>
-            <select id="eagleSpeedMode" class="select eagle-folder-select">
+            <select id="eagleSpeedMode" class="select eagle-folder-select" data-select-label="封面生成模式">
               <option value="快速">快速</option>
               <option value="平衡" selected>平衡</option>
               <option value="高质量">高质量</option>
@@ -309,7 +334,7 @@
           </div>
         </section>
 
-        <details class="panel settings-panel advanced-tools">
+        <details class="panel settings-panel advanced-tools" data-collapse-key="settings">
           <summary>高级设置与路径</summary>
           <div class="settings-body">
             <div class="field-label">程序数据目录（改动后重启生效）</div>
@@ -331,7 +356,7 @@
           </div>
         </details>
 
-        <section class="panel logs">
+        <section class="panel logs" data-collapse-key="logs" data-collapsed-default="true">
           <div class="eyebrow">运行日志</div>
           <div id="logs"></div>
         </section>
@@ -348,6 +373,13 @@
     <div id="favDropdownMenu" class="dropdown-menu dropdown-portal hidden"></div>
     <div id="videoContextMenu" class="video-context-menu hidden" role="menu">
       <button id="openVideoPageBtn" type="button" role="menuitem">打开视频网页</button>
+      <button id="downloadVideoBtn" type="button" role="menuitem">下载此视频</button>
+      <div class="context-menu-separator" role="separator"></div>
+      <button id="toggleVideoSelectionBtn" type="button" role="menuitem">选择此视频</button>
+      <button id="toggleVideoDoneBtn" type="button" role="menuitem">标记为已下载</button>
+      <div class="context-menu-separator" role="separator"></div>
+      <button id="copyVideoLinkBtn" type="button" role="menuitem">复制视频链接</button>
+      <button id="copyVideoTitleBtn" type="button" role="menuitem">复制视频标题</button>
       <button id="copyVideoBvidBtn" type="button" role="menuitem">复制 BV 号</button>
     </div>
     <script src="/motion.js?v=20260920-premium-motion"></script>

@@ -1,5 +1,316 @@
 ﻿const $ = (id) => document.getElementById(id);
 
+function initTheme() {
+  const toggle = $("themeToggle");
+  if (!toggle) return;
+
+  const applyTheme = (theme) => {
+    const next = theme === "light" ? "light" : "dark";
+    document.documentElement.dataset.theme = next;
+    toggle.textContent = next === "light" ? "☾" : "☀";
+    toggle.title = next === "light" ? "切换到深色主题" : "切换到浅色主题";
+    toggle.setAttribute("aria-label", toggle.title);
+    toggle.setAttribute("aria-pressed", String(next === "light"));
+  };
+
+  applyTheme(document.documentElement.dataset.theme);
+  toggle.addEventListener("click", () => {
+    const next = document.documentElement.dataset.theme === "light" ? "dark" : "light";
+    localStorage.setItem("bili-ui-theme", next);
+    applyTheme(next);
+  });
+}
+
+const customSelectRegistry = new Map();
+
+function customSelectLabel(select) {
+  return select.dataset.selectLabel || select.getAttribute("aria-label") || "选择选项";
+}
+
+function filterCustomSelect(state, query = "") {
+  const keyword = String(query).trim().toLocaleLowerCase();
+  let visible = 0;
+  state.menu.querySelectorAll(".smart-select-option").forEach((item) => {
+    const matched = !keyword || String(item.dataset.search || "").toLocaleLowerCase().includes(keyword);
+    item.classList.toggle("hidden", !matched);
+    if (matched) visible += 1;
+  });
+  state.menu.querySelector(".smart-select-empty")?.classList.toggle("hidden", visible > 0);
+}
+
+function positionCustomSelect(state) {
+  if (!state || state.menu.classList.contains("hidden")) return;
+  const rect = state.button.getBoundingClientRect();
+  const gap = 7;
+  const edge = 10;
+  const searchable = state.menu.classList.contains("is-searchable");
+  const desiredWidth = Math.max(rect.width, searchable ? 300 : 220);
+  const width = Math.min(desiredWidth, window.innerWidth - edge * 2);
+  const below = window.innerHeight - rect.bottom - gap - edge;
+  const above = rect.top - gap - edge;
+  const openAbove = below < 190 && above > below;
+  const availableHeight = Math.max(140, openAbove ? above : below);
+  const maxHeight = Math.min(360, availableHeight);
+  state.menu.style.width = `${Math.round(width)}px`;
+  state.menu.style.maxHeight = `${Math.round(maxHeight)}px`;
+  state.menu.style.left = `${Math.round(clampNumber(rect.left, edge, window.innerWidth - width - edge))}px`;
+  state.menu.style.top = openAbove
+    ? `${Math.round(Math.max(edge, rect.top - Math.min(state.menu.scrollHeight, maxHeight) - gap))}px`
+    : `${Math.round(rect.bottom + gap)}px`;
+}
+
+function closeCustomSelect(state, returnFocus = false) {
+  if (!state) return;
+  state.menu.classList.add("hidden");
+  state.button.setAttribute("aria-expanded", "false");
+  state.wrapper.classList.remove("open");
+  state.menu.removeAttribute("style");
+  if (returnFocus) state.button.focus();
+}
+
+function closeAllCustomSelects(except = null) {
+  customSelectRegistry.forEach((state) => {
+    if (state !== except) closeCustomSelect(state);
+  });
+}
+
+function syncCustomSelect(select) {
+  const state = customSelectRegistry.get(select.id);
+  if (!state) return;
+  const options = [...select.options];
+  const selected = options.find((option) => option.value === select.value) || options[0];
+  state.wrapper.classList.toggle("hidden", select.classList.contains("hidden"));
+  state.button.disabled = select.disabled || !options.length;
+  state.buttonLabel.textContent = selected?.textContent?.trim() || "暂无可选项";
+  state.button.title = selected?.textContent?.trim() || customSelectLabel(select);
+  const signature = JSON.stringify(options.map((option) => [option.value, option.textContent, option.disabled]));
+  if (state.signature !== signature) {
+    state.signature = signature;
+    const searchable = select.dataset.selectSearch === "true" || options.length > 8;
+    state.menu.classList.toggle("is-searchable", searchable);
+    state.menu.innerHTML = `
+      <div class="smart-select-head">
+        <div class="smart-select-summary">
+          <strong>${escapeHtml(customSelectLabel(select))}</strong>
+          <span>${options.length} 个选项</span>
+        </div>
+        ${searchable ? `<input class="smart-select-search" type="search" placeholder="搜索选项" autocomplete="off" aria-label="搜索${escapeAttr(customSelectLabel(select))}" />` : ""}
+      </div>
+      <div class="smart-select-list" role="listbox">
+        ${options.map((option) => `
+          <button class="smart-select-option" type="button" role="option" data-value="${escapeAttr(option.value)}" data-search="${escapeAttr(option.textContent || option.value)}" ${option.disabled ? "disabled" : ""}>
+            <span>${escapeHtml(option.textContent || option.value)}</span>
+            <b aria-hidden="true">✓</b>
+          </button>
+        `).join("")}
+        <div class="dropdown-empty smart-select-empty hidden">没有匹配的选项</div>
+      </div>
+    `;
+    const search = state.menu.querySelector(".smart-select-search");
+    if (search) {
+      search.oninput = () => filterCustomSelect(state, search.value);
+      search.onkeydown = (event) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          closeCustomSelect(state, true);
+        } else if (event.key === "Enter" || event.key === "ArrowDown") {
+          const first = state.menu.querySelector(".smart-select-option.active:not(.hidden):not(:disabled)")
+            || state.menu.querySelector(".smart-select-option:not(.hidden):not(:disabled)");
+          if (!first) return;
+          event.preventDefault();
+          if (event.key === "Enter") first.click();
+          else first.focus();
+        }
+      };
+    }
+    state.menu.querySelectorAll(".smart-select-option").forEach((item) => {
+      item.onclick = () => {
+        select.value = item.dataset.value;
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+        syncCustomSelect(select);
+        closeCustomSelect(state, true);
+      };
+      item.onkeydown = (event) => {
+        const visible = [...state.menu.querySelectorAll(".smart-select-option:not(.hidden):not(:disabled)")];
+        const index = visible.indexOf(item);
+        let target = null;
+        if (event.key === "ArrowDown") target = visible[Math.min(index + 1, visible.length - 1)];
+        else if (event.key === "ArrowUp") target = visible[Math.max(index - 1, 0)];
+        else if (event.key === "Home") target = visible[0];
+        else if (event.key === "End") target = visible[visible.length - 1];
+        else if (event.key === "Escape") {
+          closeCustomSelect(state, true);
+          return;
+        }
+        if (target) {
+          event.preventDefault();
+          target.focus();
+        }
+      };
+    });
+  }
+  state.menu.querySelectorAll(".smart-select-option").forEach((item) => {
+    const active = item.dataset.value === select.value;
+    item.classList.toggle("active", active);
+    item.setAttribute("aria-selected", String(active));
+  });
+}
+
+function openCustomSelect(state) {
+  closeAllCustomSelects(state);
+  closeFavDropdown();
+  syncCustomSelect(state.select);
+  state.menu.classList.remove("hidden");
+  state.wrapper.classList.add("open");
+  state.button.setAttribute("aria-expanded", "true");
+  const search = state.menu.querySelector(".smart-select-search");
+  if (search) search.value = "";
+  filterCustomSelect(state, "");
+  requestAnimationFrame(() => {
+    positionCustomSelect(state);
+    const active = state.menu.querySelector(".smart-select-option.active");
+    active?.scrollIntoView({ block: "center" });
+    (search || active)?.focus({ preventScroll: true });
+  });
+}
+
+function initCustomSelects() {
+  document.querySelectorAll("select.select").forEach((select) => {
+    if (!select.id || customSelectRegistry.has(select.id)) return;
+    const wrapper = document.createElement("div");
+    wrapper.className = "smart-select";
+    if (select.classList.contains("compact")) wrapper.classList.add("compact");
+    if (select.classList.contains("eagle-folder-select")) wrapper.classList.add("eagle-folder-select");
+    select.parentNode.insertBefore(wrapper, select);
+    wrapper.appendChild(select);
+    select.classList.add("native-select-hidden");
+    select.tabIndex = -1;
+
+    const menuId = `${select.id}Menu`;
+    const button = document.createElement("button");
+    button.id = `${select.id}Trigger`;
+    button.type = "button";
+    button.className = "smart-select-trigger";
+    button.setAttribute("aria-label", customSelectLabel(select));
+    button.setAttribute("aria-haspopup", "listbox");
+    button.setAttribute("aria-expanded", "false");
+    button.setAttribute("aria-controls", menuId);
+    button.innerHTML = `<span></span><i aria-hidden="true">⌄</i>`;
+    wrapper.appendChild(button);
+
+    const menu = document.createElement("div");
+    menu.id = menuId;
+    menu.className = "dropdown-menu smart-select-menu hidden";
+    document.body.appendChild(menu);
+    const state = { select, wrapper, button, buttonLabel: button.querySelector("span"), menu, signature: "" };
+    customSelectRegistry.set(select.id, state);
+
+    button.onclick = (event) => {
+      event.stopPropagation();
+      if (menu.classList.contains("hidden")) openCustomSelect(state);
+      else closeCustomSelect(state, true);
+    };
+    button.onkeydown = (event) => {
+      if (["Enter", " ", "ArrowDown", "ArrowUp"].includes(event.key)) {
+        event.preventDefault();
+        openCustomSelect(state);
+      } else if (event.key === "Escape") {
+        closeCustomSelect(state);
+      }
+    };
+    menu.onclick = (event) => event.stopPropagation();
+    select.addEventListener("change", () => syncCustomSelect(select));
+    new MutationObserver(() => syncCustomSelect(select)).observe(select, {
+      attributes: true,
+      childList: true,
+      subtree: true,
+      attributeFilter: ["class", "disabled", "label", "value"],
+    });
+    syncCustomSelect(select);
+  });
+  document.addEventListener("click", () => closeAllCustomSelects());
+  document.addEventListener("scroll", (event) => {
+    if (event.target instanceof Element && event.target.closest(".smart-select-menu")) return;
+    customSelectRegistry.forEach((state) => {
+      if (!state.menu.classList.contains("hidden")) positionCustomSelect(state);
+    });
+  }, true);
+  window.addEventListener("resize", () => {
+    customSelectRegistry.forEach((state) => {
+      if (!state.menu.classList.contains("hidden")) positionCustomSelect(state);
+    });
+  });
+}
+
+function syncAllCustomSelects() {
+  customSelectRegistry.forEach((state) => syncCustomSelect(state.select));
+}
+
+const collapsiblePanelRegistry = new Map();
+
+function setPanelCollapsed(key, collapsed, remember = true) {
+  const state = collapsiblePanelRegistry.get(key);
+  if (!state) return;
+  state.collapsed = Boolean(collapsed);
+  state.panel.classList.toggle("is-collapsed", state.collapsed);
+  state.button.textContent = state.collapsed ? "⌄" : "⌃";
+  state.button.title = state.collapsed ? "展开面板" : "收起面板";
+  state.button.setAttribute("aria-label", state.button.title);
+  state.button.setAttribute("aria-expanded", String(!state.collapsed));
+  if (remember) localStorage.setItem(`bili-panel-collapsed-${key}`, state.collapsed ? "1" : "0");
+}
+
+function expandPanelForActivity(key) {
+  const state = collapsiblePanelRegistry.get(key);
+  if (state?.collapsed) setPanelCollapsed(key, false, false);
+}
+
+function initCollapsiblePanels() {
+  document.querySelectorAll(".inspector > section.panel[data-collapse-key]").forEach((panel) => {
+    const key = panel.dataset.collapseKey;
+    panel.classList.add("collapsible-panel");
+    let head = panel.querySelector(":scope > .panel-head, :scope > .chart-head");
+    if (!head) {
+      head = document.createElement("div");
+      head.className = "panel-head collapsible-panel-head";
+      const title = document.createElement("div");
+      title.className = "collapsible-panel-title";
+      const eyebrow = panel.querySelector(":scope > .eyebrow");
+      if (eyebrow) title.appendChild(eyebrow);
+      head.appendChild(title);
+      panel.insertBefore(head, panel.firstChild);
+    }
+
+    let actions = head.querySelector(":scope > .panel-actions");
+    if (!actions) {
+      actions = document.createElement("div");
+      actions.className = "panel-actions";
+      [...head.children].slice(1).forEach((item) => actions.appendChild(item));
+      head.appendChild(actions);
+    }
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "icon-btn panel-collapse-btn";
+    actions.appendChild(button);
+    const state = { key, panel, head, button, collapsed: false };
+    collapsiblePanelRegistry.set(key, state);
+    const saved = localStorage.getItem(`bili-panel-collapsed-${key}`);
+    const initial = saved === null ? panel.dataset.collapsedDefault === "true" : saved === "1";
+    setPanelCollapsed(key, initial, false);
+    button.onclick = () => setPanelCollapsed(key, !state.collapsed, true);
+  });
+
+  document.querySelectorAll(".inspector > details.panel[data-collapse-key]").forEach((panel) => {
+    const key = panel.dataset.collapseKey;
+    const saved = localStorage.getItem(`bili-panel-collapsed-${key}`);
+    if (saved !== null) panel.open = saved !== "1";
+    panel.addEventListener("toggle", () => {
+      localStorage.setItem(`bili-panel-collapsed-${key}`, panel.open ? "0" : "1");
+    });
+  });
+}
+
 const app = {
   state: null,
   mode: "fav",
@@ -35,6 +346,7 @@ const app = {
   creatorSearchController: null,
   creatorSearchRequestId: 0,
   creatorSearchRunning: false,
+  workspaceControlsRefresh: null,
   tagFilter: "",
   tagFilterBvids: null,
 };
@@ -155,6 +467,141 @@ function initResizableLayout() {
   });
 }
 
+function initWorkspaceControls() {
+  const workspace = document.querySelector(".workspace");
+  const controls = $("workspaceControls");
+  const resizer = $("workspaceControlsResizer");
+  const toggle = $("workspaceControlsToggle");
+  if (!workspace || !controls || !resizer || !toggle) return;
+
+  const heightKey = "bili-workspace-controls-height";
+  const collapsedKey = "bili-workspace-controls-collapsed";
+  let collapsed = localStorage.getItem(collapsedKey) === "1";
+  let expandedHeight = Number(localStorage.getItem(heightKey));
+
+  const limits = () => {
+    const total = workspace.getBoundingClientRect().height || window.innerHeight;
+    return { min: 150, max: Math.max(190, total - 190) };
+  };
+
+  const automaticHeight = () => {
+    const total = workspace.getBoundingClientRect().height || window.innerHeight;
+    const hasVideos = currentItems().length > 0;
+    if (app.mode === "creator") {
+      return clampNumber(total * (hasVideos ? 0.5 : 0.54), 420, 560);
+    }
+    return hasVideos
+      ? clampNumber(total * 0.34, 280, 390)
+      : clampNumber(total * 0.52, 430, 540);
+  };
+
+  const updateDensity = (height) => {
+    const creatorMode = app.mode === "creator";
+    controls.classList.toggle("hide-guide", !creatorMode && height < 430);
+    controls.classList.toggle("hide-metrics", height < (creatorMode ? 600 : 315));
+    controls.classList.toggle("compact-header", height < 245);
+    controls.classList.toggle("is-collapsed", collapsed);
+  };
+
+  const updateToggle = () => {
+    toggle.textContent = collapsed ? "⌄" : "⌃";
+    toggle.title = collapsed ? "展开控制区" : "收起控制区";
+    toggle.setAttribute("aria-label", toggle.title);
+    toggle.setAttribute("aria-expanded", String(!collapsed));
+  };
+
+  const applyHeight = (requested, remember = false) => {
+    const { min, max } = limits();
+    const height = Math.round(clampNumber(requested, min, max));
+    workspace.style.setProperty("--workspace-controls-height", `${height}px`);
+    resizer.setAttribute("aria-valuemin", String(min));
+    resizer.setAttribute("aria-valuemax", String(Math.round(max)));
+    resizer.setAttribute("aria-valuenow", String(height));
+    updateDensity(height);
+    updateToggle();
+    if (remember && !collapsed) {
+      expandedHeight = height;
+      localStorage.setItem(heightKey, String(height));
+    }
+    return height;
+  };
+
+  const refreshLayout = () => {
+    if (collapsed) {
+      applyHeight(150);
+      return;
+    }
+    const saved = Number(localStorage.getItem(heightKey));
+    const requested = Number.isFinite(saved) && saved > 0 ? saved : automaticHeight();
+    expandedHeight = applyHeight(requested);
+  };
+  app.workspaceControlsRefresh = refreshLayout;
+
+  toggle.addEventListener("click", () => {
+    collapsed = !collapsed;
+    localStorage.setItem(collapsedKey, collapsed ? "1" : "0");
+    if (collapsed) {
+      const current = parseFloat(getComputedStyle(workspace).getPropertyValue("--workspace-controls-height"));
+      if (Number.isFinite(current) && current > 180) expandedHeight = current;
+      applyHeight(150);
+    } else {
+      applyHeight(expandedHeight > 180 ? expandedHeight : automaticHeight());
+    }
+  });
+
+  resizer.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    collapsed = false;
+    localStorage.setItem(collapsedKey, "0");
+    const startY = event.clientY;
+    const startHeight = controls.getBoundingClientRect().height;
+    resizer.classList.add("dragging");
+    document.body.classList.add("is-resizing-vertical");
+    resizer.setPointerCapture?.(event.pointerId);
+
+    const move = (moveEvent) => {
+      applyHeight(startHeight + moveEvent.clientY - startY, true);
+    };
+    const stop = () => {
+      resizer.classList.remove("dragging");
+      document.body.classList.remove("is-resizing-vertical");
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointercancel", stop);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop, { once: true });
+    window.addEventListener("pointercancel", stop, { once: true });
+  });
+
+  resizer.addEventListener("dblclick", () => {
+    collapsed = false;
+    expandedHeight = 0;
+    localStorage.removeItem(heightKey);
+    localStorage.setItem(collapsedKey, "0");
+    applyHeight(automaticHeight());
+  });
+
+  resizer.addEventListener("keydown", (event) => {
+    if (!["ArrowUp", "ArrowDown", "Home"].includes(event.key)) return;
+    event.preventDefault();
+    collapsed = false;
+    localStorage.setItem(collapsedKey, "0");
+    if (event.key === "Home") {
+      expandedHeight = 0;
+      localStorage.removeItem(heightKey);
+      applyHeight(automaticHeight());
+      return;
+    }
+    const current = controls.getBoundingClientRect().height;
+    const step = event.shiftKey ? 40 : 12;
+    applyHeight(current + (event.key === "ArrowDown" ? step : -step), true);
+  });
+
+  window.addEventListener("resize", refreshLayout);
+  refreshLayout();
+}
+
 async function api(path, options = {}) {
   const res = await fetch(path, {
     method: options.method || "GET",
@@ -253,6 +700,7 @@ function renderState() {
   renderGuide();
   renderSettings();
   renderLogs();
+  syncAllCustomSelects();
 }
 
 function guideStatus() {
@@ -362,6 +810,7 @@ function renderModeLayout() {
   $("searchInput").placeholder = creatorMode ? "筛选当前账号投稿的标题 / BV 号" : "搜索标题 / BV 号";
   $("metricTotalLabel").textContent = creatorMode ? "账号投稿" : "当前列表";
   $("metricSyncLabel").textContent = creatorMode ? "获取状态" : "同步状态";
+  app.workspaceControlsRefresh?.();
 }
 
 function creatorInitial(item) {
@@ -517,6 +966,7 @@ function renderTagCloud() {
   renderTagMonthOptions();
   $("tagCloudTitle").textContent = `${tagCloudSourceLabel()}标签关系图`;
   const running = Boolean(task.running);
+  if (running) expandPanelForActivity("tags");
   const range = $("tagRange").value;
   const month = $("tagMonth").value;
   const downloadedOnly = $("tagDownloadedOnly").checked;
@@ -826,13 +1276,30 @@ function renderGuide() {
   });
 }
 
+function getFavEntries() {
+  return (app.state?.favFolders && app.state.favFolders.length)
+    ? app.state.favFolders.map((item) => ({ name: item.name, fid: item.fid }))
+    : Object.entries(app.state?.favData || {}).map(([name, fid]) => ({ name, fid }));
+}
+
+function filterFavDropdown(query = "") {
+  const menu = $("favDropdownMenu");
+  const keyword = String(query).trim().toLocaleLowerCase();
+  let visible = 0;
+  menu.querySelectorAll(".dropdown-item").forEach((item) => {
+    const matched = !keyword || String(item.dataset.name || "").toLocaleLowerCase().includes(keyword);
+    item.classList.toggle("hidden", !matched);
+    if (matched) visible += 1;
+  });
+  const empty = $("favDropdownEmpty");
+  if (empty) empty.classList.toggle("hidden", visible > 0);
+}
+
 function renderFavSelect() {
-  const entries = (app.state.favFolders && app.state.favFolders.length)
-    ? app.state.favFolders.map((item) => [item.name, item.fid])
-    : Object.entries(app.state.favData || {});
+  const entries = getFavEntries();
   const signature = JSON.stringify(entries);
-  if (!entries.some(([, fid]) => String(fid) === String(app.selectedFavId))) {
-    app.selectedFavId = entries.length ? String(entries[0][1]) : "";
+  if (!entries.some((item) => String(item.fid) === String(app.selectedFavId))) {
+    app.selectedFavId = entries.length ? String(entries[0].fid) : "";
   }
   if (signature === app.foldersSignature) {
     updateFavDropdownLabel(entries);
@@ -843,27 +1310,86 @@ function renderFavSelect() {
   if (!entries.length) {
     menu.innerHTML = `<div class="dropdown-empty">暂无收藏夹</div>`;
   } else {
-    menu.innerHTML = entries.map(([name, fid]) => `
-      <button class="dropdown-item ${String(fid) === String(app.selectedFavId) ? "active" : ""}" data-fid="${escapeAttr(fid)}" data-name="${escapeAttr(name)}">
-        ${escapeHtml(name)}
-      </button>
-    `).join("");
+    menu.innerHTML = `
+      <div class="fav-dropdown-head">
+        <div class="fav-dropdown-summary">
+          <strong>选择收藏夹</strong>
+          <span>${entries.length} 个可用收藏夹</span>
+        </div>
+        <input id="favDropdownSearch" class="fav-dropdown-search" type="search" placeholder="搜索收藏夹名称" autocomplete="off" aria-label="搜索收藏夹" />
+      </div>
+      <div class="fav-dropdown-list" role="listbox">
+        ${entries.map(({ name, fid }, index) => {
+          const displayName = String(name || "未命名收藏夹");
+          const initial = Array.from(displayName.trim())[0] || "收";
+          const hue = (index * 37 + 326) % 360;
+          return `
+            <button class="dropdown-item ${String(fid) === String(app.selectedFavId) ? "active" : ""}" data-fid="${escapeAttr(fid)}" data-name="${escapeAttr(displayName)}" role="option" aria-selected="${String(fid) === String(app.selectedFavId)}" style="--fav-hue:${hue}">
+              <span class="fav-item-mark" aria-hidden="true">${escapeHtml(initial)}</span>
+              <span class="fav-item-copy">
+                <strong title="${escapeAttr(displayName)}">${escapeHtml(displayName)}</strong>
+                <small>收藏夹 ${index + 1}</small>
+              </span>
+              <span class="fav-item-check" aria-hidden="true">✓</span>
+            </button>
+          `;
+        }).join("")}
+        <div id="favDropdownEmpty" class="dropdown-empty hidden">没有匹配的收藏夹</div>
+      </div>
+    `;
+    const search = $("favDropdownSearch");
+    search.oninput = () => filterFavDropdown(search.value);
+    search.onkeydown = (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeFavDropdown();
+        $("favDropdownBtn").focus();
+      } else if (event.key === "Enter" || event.key === "ArrowDown") {
+        const first = (!search.value.trim() && menu.querySelector(".dropdown-item.active:not(.hidden)"))
+          || menu.querySelector(".dropdown-item:not(.hidden)");
+        if (!first) return;
+        event.preventDefault();
+        if (event.key === "Enter") first.click();
+        else first.focus();
+      }
+    };
     menu.querySelectorAll(".dropdown-item").forEach((item) => {
       item.onclick = () => {
         app.selectedFavId = String(item.dataset.fid);
         closeFavDropdown();
         renderFavSelect();
       };
+      item.onkeydown = (event) => {
+        const visibleItems = [...menu.querySelectorAll(".dropdown-item:not(.hidden)")];
+        const index = visibleItems.indexOf(item);
+        let target = null;
+        if (event.key === "ArrowDown") target = visibleItems[Math.min(index + 1, visibleItems.length - 1)];
+        else if (event.key === "ArrowUp") target = visibleItems[Math.max(index - 1, 0)];
+        else if (event.key === "Home") target = visibleItems[0];
+        else if (event.key === "End") target = visibleItems[visibleItems.length - 1];
+        else if (event.key === "Escape") {
+          closeFavDropdown();
+          $("favDropdownBtn").focus();
+          return;
+        }
+        if (target) {
+          event.preventDefault();
+          target.focus();
+        }
+      };
     });
   }
   updateFavDropdownLabel(entries);
 }
 
-function updateFavDropdownLabel(entries = Object.entries(app.state?.favData || {})) {
-  const found = entries.find(([, fid]) => String(fid) === String(app.selectedFavId));
-  $("favDropdownLabel").textContent = found ? found[0] : "请选择收藏夹";
+function updateFavDropdownLabel(entries = getFavEntries()) {
+  const found = entries.find((item) => String(item.fid) === String(app.selectedFavId));
+  $("favDropdownLabel").textContent = found ? found.name : "请选择收藏夹";
+  $("favDropdownCount").textContent = entries.length ? `共 ${entries.length} 个收藏夹` : "尚未读取收藏夹";
   $("favDropdownMenu").querySelectorAll(".dropdown-item").forEach((item) => {
-    item.classList.toggle("active", String(item.dataset.fid) === String(app.selectedFavId));
+    const active = String(item.dataset.fid) === String(app.selectedFavId);
+    item.classList.toggle("active", active);
+    item.setAttribute("aria-selected", String(active));
   });
 }
 
@@ -876,9 +1402,11 @@ function positionFavDropdownMenu() {
   const viewportGap = 12;
   const top = rect.bottom + margin;
   const maxHeight = Math.max(160, window.innerHeight - top - viewportGap);
+  const availableWidth = Math.max(180, window.innerWidth - rect.left - viewportGap);
+  const desiredWidth = Math.max(rect.width, 280);
   menu.style.left = `${Math.round(rect.left)}px`;
   menu.style.top = `${Math.round(top)}px`;
-  menu.style.width = `${Math.round(rect.width)}px`;
+  menu.style.width = `${Math.round(Math.min(340, desiredWidth, availableWidth))}px`;
   menu.style.maxHeight = `${Math.min(420, maxHeight)}px`;
 }
 
@@ -892,6 +1420,7 @@ function portalFavDropdownMenu() {
 
 function closeFavDropdown() {
   $("favDropdown").classList.remove("open");
+  $("favDropdownBtn").setAttribute("aria-expanded", "false");
   const menu = $("favDropdownMenu");
   menu.classList.add("hidden");
   menu.removeAttribute("style");
@@ -901,10 +1430,21 @@ function toggleFavDropdown() {
   const root = $("favDropdown");
   const menu = $("favDropdownMenu");
   const open = menu.classList.contains("hidden");
+  if (open) closeAllCustomSelects();
   root.classList.toggle("open", open);
+  $("favDropdownBtn").setAttribute("aria-expanded", String(open));
   if (open) portalFavDropdownMenu();
   menu.classList.toggle("hidden", !open);
-  if (open) requestAnimationFrame(positionFavDropdownMenu);
+  if (open) {
+    const search = $("favDropdownSearch");
+    if (search) search.value = "";
+    filterFavDropdown("");
+    requestAnimationFrame(() => {
+      positionFavDropdownMenu();
+      menu.querySelector(".dropdown-item.active")?.scrollIntoView({ block: "center" });
+      search?.focus({ preventScroll: true });
+    });
+  }
 }
 
 function renderMetrics() {
@@ -1018,12 +1558,21 @@ function renderListIfNeeded(force = false) {
     items: pageItems.map((x) => [x.bvid, x.title, x.cover, x.month, x.duration]),
   });
   if (signature === app.listSignature) {
-    $("pageInfo").textContent = `Page ${app.page} / ${totalPages}`;
+    updatePageControls(totalPages);
     updateListVisualState(pageItems);
     return;
   }
   app.listSignature = signature;
   renderList(pageItems, totalPages);
+}
+
+function updatePageControls(totalPages) {
+  const pageInput = $("pageInput");
+  pageInput.max = String(totalPages);
+  if (document.activeElement !== pageInput) pageInput.value = String(app.page);
+  $("pageTotal").textContent = String(totalPages);
+  $("prevPage").disabled = app.page <= 1;
+  $("nextPage").disabled = app.page >= totalPages;
 }
 
 function updateListVisualState(pageItems = []) {
@@ -1050,7 +1599,7 @@ function updateListVisualState(pageItems = []) {
 function renderList(pageItems, totalPages) {
   const list = $("videoList");
   const history = historySet();
-  $("pageInfo").textContent = `Page ${app.page} / ${totalPages}`;
+  updatePageControls(totalPages);
 
   if (!pageItems.length) {
     list.innerHTML = `<div class="empty">没有可显示的视频</div>`;
@@ -1108,10 +1657,45 @@ function videoPageUrl(bvid) {
   return `https://www.bilibili.com/video/${encodeURIComponent(String(bvid || "").trim())}`;
 }
 
+function findVideoByBvid(bvid) {
+  const target = String(bvid || "");
+  const pools = [app.state?.favVideos, app.state?.creatorVideos, app.state?.manualVideos];
+  for (const pool of pools) {
+    const item = (pool || []).find((video) => String(video.bvid) === target);
+    if (item) return item;
+  }
+  return null;
+}
+
+async function copyText(text, successMessage) {
+  const value = String(text || "").trim();
+  if (!value) return;
+  try {
+    if (!navigator.clipboard?.writeText) throw new Error("Clipboard API unavailable");
+    await navigator.clipboard.writeText(value);
+    toast(successMessage);
+  } catch (error) {
+    const input = document.createElement("textarea");
+    input.value = value;
+    input.style.position = "fixed";
+    input.style.opacity = "0";
+    document.body.appendChild(input);
+    input.select();
+    const copied = document.execCommand("copy");
+    input.remove();
+    toast(copied ? successMessage : value);
+  }
+}
+
 function showVideoContextMenu(clientX, clientY, bvid) {
   const menu = $("videoContextMenu");
   if (!menu || !bvid) return;
   app.contextMenuBvid = String(bvid);
+  const done = historySet().has(String(bvid));
+  const selected = app.selected.has(String(bvid));
+  $("downloadVideoBtn").textContent = done ? "重新下载此视频" : "下载此视频";
+  $("toggleVideoSelectionBtn").textContent = selected ? "取消选择" : "选择此视频";
+  $("toggleVideoDoneBtn").textContent = done ? "标记为未下载" : "标记为已下载";
   menu.classList.remove("hidden");
   menu.style.left = "0px";
   menu.style.top = "0px";
@@ -1131,6 +1715,7 @@ function hideVideoContextMenu() {
 
 function renderDownload() {
   const d = app.state.download || {};
+  if (d.running) expandPanelForActivity("download");
   $("downloadTitle").textContent = d.title || "等待任务";
   $("downloadStatus").textContent = d.status || "Ready";
   $("totalProgress").style.width = `${Math.round((d.total || 0) * 100)}%`;
@@ -1161,6 +1746,7 @@ function renderSettings() {
 function renderEagle() {
   const cfg = app.state.eagle || {};
   const task = app.state.eagleTask || {};
+  if (task.running) expandPanelForActivity("eagle");
   const index = app.state.eagleIndex || {};
   const library = $("eagleLibrary");
   if (library && document.activeElement !== library) library.value = cfg.libraryDir || "";
@@ -1241,6 +1827,7 @@ function renderDiagnostics() {
 }
 
 async function runDiagnostics() {
+  expandPanelForActivity("diagnostics");
   app.diagnosticsLoading = true;
   renderDiagnostics();
   try {
@@ -1400,6 +1987,32 @@ function isEditableTarget(target) {
 
 function selectedArray() {
   return [...app.selected];
+}
+
+async function startDownloadFor(bvids) {
+  const items = [...new Set((bvids || []).filter(Boolean))];
+  if (!items.length) {
+    toast("请先选择要下载的视频");
+    return false;
+  }
+  if (!$("saveDir").value.trim()) {
+    toast("请先选择下载目录");
+    scrollIntoPanel("chooseDirBtn");
+    return false;
+  }
+  await api("/api/download/start", {
+    method: "POST",
+    body: {
+      bvids: items,
+      saveDir: $("saveDir").value.trim(),
+      quality: $("quality").value,
+      speed: $("speed").value,
+      audioOnly: $("audioOnly").checked,
+      allParts: $("allParts").checked,
+    },
+  });
+  toast(items.length === 1 ? "该视频已加入下载任务" : `已启动 ${items.length} 个视频的下载任务`);
+  return true;
 }
 
 async function refresh() {
@@ -1710,6 +2323,11 @@ async function promptAction(title, placeholder, action) {
 function scrollIntoPanel(id) {
   const el = $(id);
   if (!el) return;
+  const panel = el.closest("[data-collapse-key]");
+  if (panel?.classList.contains("is-collapsed")) {
+    setPanelCollapsed(panel.dataset.collapseKey, false, true);
+  }
+  if (panel?.tagName === "DETAILS" && !panel.open) panel.open = true;
   el.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
   el.classList.add("attention");
   setTimeout(() => el.classList.remove("attention"), 900);
@@ -1884,10 +2502,31 @@ function bindEvents() {
   $("prevPage").onclick = () => {
     app.page -= 1;
     renderListIfNeeded(true);
+    $("videoList").scrollTop = 0;
   };
   $("nextPage").onclick = () => {
     app.page += 1;
     renderListIfNeeded(true);
+    $("videoList").scrollTop = 0;
+  };
+  const jumpToPage = () => {
+    const totalPages = Math.max(1, Math.ceil(filteredItems().length / app.pageSize));
+    const requested = Number.parseInt($("pageInput").value, 10);
+    app.page = Number.isFinite(requested) ? clampNumber(requested, 1, totalPages) : app.page;
+    $("pageInput").value = String(app.page);
+    renderListIfNeeded(true);
+    $("videoList").scrollTop = 0;
+  };
+  $("pageInput").onchange = jumpToPage;
+  $("pageInput").onkeydown = (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      jumpToPage();
+      event.currentTarget.blur();
+    } else if (event.key === "Escape") {
+      event.currentTarget.value = String(app.page);
+      event.currentTarget.blur();
+    }
   };
   $("selectAllBtn").onclick = toggleSelectAll;
   $("clearSelectBtn").onclick = clearSelection;
@@ -2054,23 +2693,7 @@ function bindEvents() {
         scrollIntoPanel("videoList");
         return;
       }
-      if (!$("saveDir").value.trim()) {
-        toast("请先选择下载目录");
-        scrollIntoPanel("chooseDirBtn");
-        return;
-      }
-      await api("/api/download/start", {
-        method: "POST",
-        body: {
-          bvids: selectedArray(),
-          saveDir: $("saveDir").value.trim(),
-          quality: $("quality").value,
-          speed: $("speed").value,
-          audioOnly: $("audioOnly").checked,
-          allParts: $("allParts").checked,
-        },
-      });
-      toast("下载已启动");
+      await startDownloadFor(selectedArray());
     } catch (error) {
       toast(error.message);
     }
@@ -2251,16 +2874,50 @@ function bindEvents() {
     if (!bvid) return;
     window.open(videoPageUrl(bvid), "_blank", "noopener,noreferrer");
   };
-  $("copyVideoBvidBtn").onclick = async () => {
+  $("downloadVideoBtn").onclick = async () => {
     const bvid = app.contextMenuBvid;
     hideVideoContextMenu();
     if (!bvid) return;
     try {
-      await navigator.clipboard?.writeText(bvid);
-      toast(`已复制 ${bvid}`);
+      await startDownloadFor([bvid]);
     } catch (error) {
-      toast(`BV 号：${bvid}`);
+      toast(error.message);
     }
+  };
+  $("toggleVideoSelectionBtn").onclick = () => {
+    const bvid = app.contextMenuBvid;
+    hideVideoContextMenu();
+    if (bvid) toggleSelect(bvid);
+  };
+  $("toggleVideoDoneBtn").onclick = async () => {
+    const bvid = app.contextMenuBvid;
+    const done = historySet().has(bvid);
+    hideVideoContextMenu();
+    if (!bvid) return;
+    try {
+      await api("/api/mark", { method: "POST", body: { bvids: [bvid], done: !done } });
+      toast(done ? "已标记为未下载" : "已标记为已下载");
+      await refresh();
+    } catch (error) {
+      toast(error.message);
+    }
+  };
+  $("copyVideoLinkBtn").onclick = async () => {
+    const bvid = app.contextMenuBvid;
+    hideVideoContextMenu();
+    if (bvid) await copyText(videoPageUrl(bvid), "视频链接已复制");
+  };
+  $("copyVideoTitleBtn").onclick = async () => {
+    const bvid = app.contextMenuBvid;
+    const title = findVideoByBvid(bvid)?.title || "";
+    hideVideoContextMenu();
+    if (title) await copyText(title, "视频标题已复制");
+  };
+  $("copyVideoBvidBtn").onclick = async () => {
+    const bvid = app.contextMenuBvid;
+    hideVideoContextMenu();
+    if (!bvid) return;
+    await copyText(bvid, `已复制 ${bvid}`);
   };
   document.addEventListener("click", (event) => {
     if (!event.target.closest("#videoContextMenu")) hideVideoContextMenu();
@@ -2300,8 +2957,12 @@ function bindEvents() {
   });
 }
 
+initTheme();
 initResizableLayout();
+initWorkspaceControls();
 initTagGraphCanvas();
+initCustomSelects();
+initCollapsiblePanels();
 bindEvents();
 refresh();
 setInterval(refresh, 1400);

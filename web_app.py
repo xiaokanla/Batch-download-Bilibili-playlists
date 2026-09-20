@@ -34,7 +34,7 @@ APP_DIR = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else 
 WEB_DIR = os.path.join(RESOURCE_DIR, "webui")
 DEFAULT_USERDATA_DIR = os.path.join(APP_DIR, "userdata")
 BOOTSTRAP_SETTINGS_PATH = os.path.join(DEFAULT_USERDATA_DIR, "app_settings.json")
-APP_VERSION = "1.4.4"
+APP_VERSION = "1.4.5"
 APP_FLAVOR = "release"
 
 
