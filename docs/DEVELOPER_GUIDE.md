@@ -70,7 +70,7 @@ SQLite，再写 JSON 镜像，以兼容旧版程序和 Eagle 独立脚本。
 常用接口：
 
 - `GET /api/state`：获取完整前端状态。
-- `POST /api/login/qr`：生成登录二维码。
+- `POST /api/login/qr`：生成独立会话的登录二维码；传入 `{"switch": true}` 可在扫码成功后原子切换账号。
 - `POST /api/sync`：同步收藏夹。
 - `POST /api/creator/search`：按账号名称、UID 或空间主页查找账号候选。
 - `POST /api/creator/sync`：低频串行获取指定账号的公开投稿；前端用顶部搜索栏本地筛选。
@@ -87,6 +87,8 @@ SQLite，再写 JSON 镜像，以兼容旧版程序和 Eagle 独立脚本。
 2. `web_app.py` 汇总当前收藏夹、账号投稿或手动列表中的视频元数据。
 3. 创建 `DownloadWorker`。
 4. `worker.py` 使用 yt-dlp 下载视频。
+   - 2K/4K 分别优先选择 1440P/2160P，缺失时降到目标范围内最高可用画质。
+   - 批量任务保持单视频串行，不因高画质选项并发请求多个视频。
 5. 如果使用外部 Aria2 失败，会自动禁用 Aria2 并回退。
 6. 下载成功后调用 `record_download`，写入 SQLite 下载记录和历史表，同时更新 JSON 镜像。
 7. 异步缓存弹幕 XML，供后续套图抽帧使用。

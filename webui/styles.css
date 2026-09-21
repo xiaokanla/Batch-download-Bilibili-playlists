@@ -140,6 +140,289 @@ body.is-resizing-vertical select {
   overflow: hidden;
 }
 
+.workspace > .workspace-controls {
+  grid-row: 1;
+  grid-column: 1;
+}
+
+.workspace > .workspace-controls-resizer {
+  grid-row: 2;
+  grid-column: 1;
+}
+
+.workspace > .video-list {
+  grid-row: 3;
+  grid-column: 1;
+}
+
+.login-stage {
+  position: relative;
+  z-index: 12;
+  display: grid;
+  grid-row: 1 / -1;
+  grid-column: 1;
+  min-width: 0;
+  min-height: 0;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--bg1);
+  box-shadow: var(--shadow);
+}
+
+.login-stage-door {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: calc(50% + 1px);
+  background: #111722;
+  will-change: transform;
+}
+
+.login-stage-door::before,
+.login-stage-door::after {
+  position: absolute;
+  width: 64px;
+  height: 1px;
+  background: rgba(109, 200, 255, 0.24);
+  content: "";
+}
+
+.login-stage-door::before {
+  top: 31%;
+}
+
+.login-stage-door::after {
+  bottom: 31%;
+}
+
+.login-stage-door-left {
+  left: 0;
+  border-right: 1px solid rgba(251, 114, 153, 0.24);
+}
+
+.login-stage-door-left::before,
+.login-stage-door-left::after {
+  right: 28px;
+}
+
+.login-stage-door-right {
+  right: 0;
+  border-left: 1px solid rgba(109, 200, 255, 0.2);
+}
+
+.login-stage-door-right::before,
+.login-stage-door-right::after {
+  left: 28px;
+}
+
+.login-stage-seam {
+  position: absolute;
+  z-index: 2;
+  top: 12%;
+  bottom: 12%;
+  left: 50%;
+  width: 1px;
+  background: rgba(240, 246, 255, 0.22);
+  box-shadow: 0 0 20px rgba(109, 200, 255, 0.28), 0 0 34px rgba(251, 114, 153, 0.18);
+  transform: translateX(-50%);
+}
+
+.login-stage-content {
+  position: relative;
+  z-index: 4;
+  display: flex;
+  width: min(520px, calc(100% - 48px));
+  flex-direction: column;
+  align-items: center;
+  color: var(--text);
+  text-align: center;
+}
+
+.login-stage-content h2 {
+  margin: 13px 0 9px;
+  font-size: 42px;
+  line-height: 1.18;
+  letter-spacing: 0;
+}
+
+.login-stage-content p {
+  max-width: 460px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.8;
+}
+
+.login-stage-content > small {
+  margin-top: 14px;
+  color: color-mix(in srgb, var(--muted) 72%, transparent);
+}
+
+.login-stage-mark {
+  position: relative;
+  display: grid;
+  width: 92px;
+  height: 92px;
+  margin-bottom: 22px;
+  place-items: center;
+  border: 1px solid rgba(109, 200, 255, 0.42);
+  border-radius: 24px;
+  background: var(--surface2);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.28), inset 0 0 0 6px rgba(255, 255, 255, 0.025);
+}
+
+.login-stage-mark::before,
+.login-stage-mark::after {
+  position: absolute;
+  inset: -12px;
+  border: 1px solid rgba(251, 114, 153, 0.3);
+  border-radius: 31px;
+  content: "";
+}
+
+.login-stage-mark::after {
+  inset: -22px;
+  border-color: rgba(109, 200, 255, 0.14);
+  border-top-color: rgba(109, 200, 255, 0.7);
+  animation: loginStageOrbit 8s linear infinite;
+}
+
+.login-stage-mark span {
+  font-size: 38px;
+  font-weight: 800;
+}
+
+.login-stage-mark i {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  width: 13px;
+  height: 13px;
+  border: 3px solid #111722;
+  border-radius: 50%;
+  background: var(--success);
+}
+
+.login-stage-btn {
+  min-width: 210px;
+  margin-top: 28px;
+  padding: 13px 24px;
+}
+
+.login-stage-status {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px 18px;
+  margin-top: 22px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.login-stage-status span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.login-stage-status i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--warning);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--warning) 70%, transparent);
+}
+
+.login-stage-status span.is-ready i {
+  background: var(--success);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--success) 70%, transparent);
+}
+
+.workspace.auth-pending > .workspace-controls,
+.workspace.auth-pending > .workspace-controls-resizer,
+.workspace.auth-pending > .video-list,
+.workspace.auth-locked > .workspace-controls,
+.workspace.auth-locked > .workspace-controls-resizer,
+.workspace.auth-locked > .video-list {
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.workspace.auth-ready > .login-stage {
+  display: none;
+}
+
+.workspace.auth-unlocking > .login-stage {
+  background: transparent;
+  pointer-events: none;
+}
+
+.workspace.auth-unlocking .login-stage-content {
+  animation: loginStageContentExit 460ms cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+.workspace.auth-unlocking .login-stage-seam {
+  animation: loginStageSeamOpen 520ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.workspace.auth-unlocking .login-stage-door-left {
+  animation: loginStageDoorLeft 920ms 220ms cubic-bezier(0.2, 0.78, 0.18, 1) both;
+}
+
+.workspace.auth-unlocking .login-stage-door-right {
+  animation: loginStageDoorRight 920ms 220ms cubic-bezier(0.2, 0.78, 0.18, 1) both;
+}
+
+.workspace.auth-unlocking > .workspace-controls,
+.workspace.auth-unlocking > .workspace-controls-resizer,
+.workspace.auth-unlocking > .video-list,
+.motion-enabled.motion-ready .workspace.auth-unlocking > .workspace-controls,
+.motion-enabled.motion-ready .workspace.auth-unlocking > .workspace-controls-resizer,
+.motion-enabled.motion-ready .workspace.auth-unlocking > .video-list {
+  visibility: visible;
+  pointer-events: auto;
+  animation: loginStageWorkspaceGrow 820ms 310ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  transform-origin: center;
+}
+
+@keyframes loginStageOrbit {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes loginStageContentExit {
+  to { opacity: 0; transform: scale(0.94); }
+}
+
+@keyframes loginStageSeamOpen {
+  0% { opacity: 1; transform: translateX(-50%) scaleY(1); }
+  55% { opacity: 1; transform: translateX(-50%) scaleY(1.08); }
+  100% { opacity: 0; transform: translateX(-50%) scaleY(0); }
+}
+
+@keyframes loginStageDoorLeft {
+  to { transform: translateX(-103%); }
+}
+
+@keyframes loginStageDoorRight {
+  to { transform: translateX(103%); }
+}
+
+@keyframes loginStageWorkspaceGrow {
+  from {
+    opacity: 0;
+    clip-path: inset(0 49% 0 49% round 18px);
+    transform: scaleY(0.92);
+  }
+  to {
+    opacity: 1;
+    clip-path: inset(0 0 0 0 round 0);
+    transform: scaleY(1);
+  }
+}
+
 .workspace-controls {
   display: grid;
   grid-template-rows: auto auto auto auto;
@@ -567,6 +850,15 @@ h3 {
   margin-bottom: 6px;
   font-size: 18px;
   font-weight: 800;
+}
+
+.quality-hint {
+  border-left: 3px solid var(--accent);
+  padding: 8px 10px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
 .top {
@@ -2720,6 +3012,13 @@ h3 {
     overflow: visible;
   }
 
+  .workspace.auth-pending,
+  .workspace.auth-locked,
+  .workspace.auth-unlocking {
+    min-height: min(720px, calc(100vh - 32px));
+    overflow: hidden;
+  }
+
   .workspace-controls {
     max-height: none;
     overflow: visible;
@@ -2747,6 +3046,15 @@ h3 {
 }
 
 @media (max-width: 640px) {
+  .login-stage-content h2 {
+    font-size: 30px;
+  }
+
+  .login-stage-mark {
+    width: 80px;
+    height: 80px;
+  }
+
   .top {
     grid-template-columns: minmax(0, 1fr) auto;
   }
@@ -2847,6 +3155,23 @@ h3 {
     radial-gradient(circle at 12% 15%, rgba(232, 95, 137, 0.13), transparent 29%),
     radial-gradient(circle at 82% 12%, rgba(43, 150, 207, 0.12), transparent 27%),
     linear-gradient(135deg, var(--bg0), var(--bg1));
+}
+
+:root[data-theme="light"] .login-stage {
+  background: #f4f7fb;
+}
+
+:root[data-theme="light"] .login-stage-door {
+  background: #f7f9fc;
+}
+
+:root[data-theme="light"] .login-stage-mark {
+  background: #ffffff;
+  box-shadow: 0 18px 44px rgba(39, 57, 84, 0.14), inset 0 0 0 6px rgba(43, 150, 207, 0.035);
+}
+
+:root[data-theme="light"] .login-stage-mark i {
+  border-color: #f7f9fc;
 }
 
 :root[data-theme="light"] .layout-resizer::before,

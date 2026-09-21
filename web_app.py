@@ -103,6 +103,7 @@ class WebBiliApp:
         self.download_tag_queue = queue.Queue()
         self.download_tag_pending = set()
         self.download_tag_worker = None
+        self.qr_login_sessions = {}
         self.tag_task = {
             "running": False,
             "cancelled": False,
@@ -267,6 +268,7 @@ class WebBiliApp:
             self.creator_search_cache = {}
             self.tag_cache = {}
             self.download_tag_pending = set()
+            self.qr_login_sessions = {}
             self.eagle = {
                 "libraryDir": "",
                 "folderId": "",
@@ -1084,10 +1086,37 @@ class WebBiliApp:
             return fav_data
         raise RuntimeError(data.get("message", "获取收藏夹失败"))
 
-    def qr_login_generate(self):
-        data = self.mgr.session.get("https://passport.bilibili.com/x/passport-login/web/qrcode/generate", timeout=15).json()
+    def _account_switch_busy(self):
+        return bool(
+            self.sync_running
+            or self.creator_sync_running
+            or self.download.get("running")
+            or self.tag_task.get("running")
+        )
+
+    def qr_login_generate(self, switching=False):
+        if switching and self._account_switch_busy():
+            raise RuntimeError("同步、下载或标签任务运行时不能切换账号")
+
+        login_session = requests.Session()
+        login_session.headers.update(self.mgr.session.headers)
+        data = login_session.get("https://passport.bilibili.com/x/passport-login/web/qrcode/generate", timeout=15).json()
+        if data.get("code") != 0 or not data.get("data"):
+            raise RuntimeError(data.get("message") or "生成登录二维码失败")
         url = data["data"]["url"]
         key = data["data"]["qrcode_key"]
+        with self.lock:
+            now = time.time()
+            self.qr_login_sessions = {
+                old_key: value
+                for old_key, value in self.qr_login_sessions.items()
+                if now - float(value.get("createdAt") or 0) < 300
+            }
+            self.qr_login_sessions[key] = {
+                "session": login_session,
+                "createdAt": now,
+                "switching": bool(switching),
+            }
         qr = qrcode.QRCode()
         qr.add_data(url)
         qr.make()
@@ -1095,18 +1124,55 @@ class WebBiliApp:
         buf = io.BytesIO()
         img.save(buf, "PNG")
         encoded = base64.b64encode(buf.getvalue()).decode("ascii")
-        return {"key": key, "image": f"data:image/png;base64,{encoded}"}
+        return {"key": key, "image": f"data:image/png;base64,{encoded}", "switching": bool(switching)}
 
     def qr_login_poll(self, key):
-        data = self.mgr.session.get(f"https://passport.bilibili.com/x/passport-login/web/qrcode/poll?qrcode_key={key}", timeout=15).json()
+        with self.lock:
+            pending = self.qr_login_sessions.get(str(key))
+        if not pending:
+            return {"code": 86038, "message": "二维码已失效，请重新打开登录窗口"}
+
+        login_session = pending["session"]
+        data = login_session.get(f"https://passport.bilibili.com/x/passport-login/web/qrcode/poll?qrcode_key={key}", timeout=15).json()
         code = data.get("data", {}).get("code")
         if code == 0:
-            self.auto_login()
+            if pending.get("switching") and self._account_switch_busy():
+                return {"code": -1, "message": "已有任务开始运行，暂时不能切换账号"}
+
+            nav = login_session.get("https://api.bilibili.com/x/web-interface/nav", timeout=15).json()
+            if nav.get("code") != 0 or not nav.get("data", {}).get("isLogin"):
+                raise RuntimeError(nav.get("message") or "新账号登录状态验证失败")
+            mid = str(nav["data"]["mid"])
+            uname = nav["data"].get("uname") or mid
+
+            self.mgr.session.cookies.clear()
+            self.mgr.session.cookies.update(login_session.cookies)
+            self.mgr.switch_user(mid)
+            with self.lock:
+                self.qr_login_sessions.clear()
+                self.user = {"loggedIn": True, "name": uname, "mid": mid}
+                self.fav_data = {}
+                self.fav_folders = []
+                self.fav_videos = []
+
+            def _load_account_data():
+                try:
+                    time.sleep(random.uniform(0.8, 1.4))
+                    self.fetch_fav_folders(mid)
+                    self.log(f"已登录：{uname}")
+                except Exception as exc:
+                    self.log(f"账号已切换，但读取收藏夹失败：{exc}")
+
+            threading.Thread(target=_load_account_data, daemon=True).start()
+        elif code == 86038:
+            with self.lock:
+                self.qr_login_sessions.pop(str(key), None)
         return data.get("data", {})
 
     def logout(self):
         self.mgr.logout()
         with self.lock:
+            self.qr_login_sessions.clear()
             self.user = {"loggedIn": False, "name": "未登录", "mid": "guest"}
             self.fav_data = {}
             self.fav_folders = []
@@ -2778,6 +2844,8 @@ class WebBiliApp:
         if not items:
             raise RuntimeError("没有找到可下载项目")
         quality = payload.get("quality") or "1080"
+        if quality not in {"480", "720", "1080", "2K", "4K"}:
+            raise RuntimeError("不支持的清晰度")
         audio_only = bool(payload.get("audioOnly"))
         dl_all = bool(payload.get("allParts"))
         try:
@@ -2786,6 +2854,8 @@ class WebBiliApp:
             speed = 0
         if not self.env["ffmpeg"] and not audio_only and quality in ["4K", "2K", "1080", "720"]:
             raise RuntimeError("缺少 FFmpeg，无法合并高清视频")
+        if quality in {"2K", "4K"} and not self.user.get("loggedIn"):
+            raise RuntimeError("批量下载 2K/4K 前请先登录 B站账号")
 
         def progress(percent, text, is_switch, current_idx=0, total_cnt=1):
             with self.lock:
@@ -2810,7 +2880,17 @@ class WebBiliApp:
             self.log(message)
 
         with self.lock:
-            self.download.update({"running": True, "total": 0, "file": 0, "title": "准备下载", "status": "Ready"})
+            self.download.update({
+                "running": True,
+                "total": 0,
+                "file": 0,
+                "title": f"准备批量下载 · {quality}",
+                "status": f"共 {len(items)} 个视频",
+                "quality": quality,
+                "count": len(items),
+            })
+        if quality in {"2K", "4K"}:
+            self.log(f"启动高画质批量下载：{len(items)} 个视频 · {quality} · 单视频串行处理")
         self.worker = DownloadWorker(items, save_dir, speed, quality, progress, history_cb, fail_cb, self.mgr.session, self.mgr.get_netscape_cookie_path, log_proxy, audio_only, dl_all)
         threading.Thread(target=self.worker.run, daemon=True).start()
         return {"started": True}
@@ -2914,7 +2994,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             payload = self.read_json()
             if path == "/api/login/qr":
-                return self.send_json(APP.qr_login_generate())
+                return self.send_json(APP.qr_login_generate(bool(payload.get("switch"))))
             if path == "/api/logout":
                 APP.logout()
                 return self.send_json({"ok": True})

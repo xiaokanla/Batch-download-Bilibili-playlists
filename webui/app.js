@@ -347,6 +347,9 @@ const app = {
   creatorSearchRequestId: 0,
   creatorSearchRunning: false,
   workspaceControlsRefresh: null,
+  authVisualInitialized: false,
+  authWasLoggedIn: false,
+  authUnlockTimer: null,
   tagFilter: "",
   tagFilterBvids: null,
 };
@@ -677,10 +680,72 @@ function filteredItems() {
   });
 }
 
+function renderLoginStage(loggedIn) {
+  const workspace = document.querySelector(".workspace");
+  const stage = $("loginStage");
+  if (!workspace || !stage) return;
+
+  const updateEnvironment = (id, label, available, optional = false) => {
+    const element = $(id);
+    if (!element) return;
+    element.classList.toggle("is-ready", Boolean(available));
+    element.lastChild.textContent = available
+      ? `${label} 就绪`
+      : `${label} ${optional ? "未检测（可选）" : "未检测"}`;
+  };
+  updateEnvironment("loginStageFfmpeg", "FFmpeg", app.state?.env?.ffmpeg);
+  updateEnvironment("loginStageAria", "Aria2", app.state?.env?.aria2, true);
+
+  if (!app.authVisualInitialized) {
+    app.authVisualInitialized = true;
+    app.authWasLoggedIn = loggedIn;
+    workspace.classList.remove("auth-pending");
+    workspace.classList.add(loggedIn ? "auth-ready" : "auth-locked");
+    stage.setAttribute("aria-hidden", String(loggedIn));
+    return;
+  }
+
+  if (loggedIn && !app.authWasLoggedIn) {
+    clearTimeout(app.authUnlockTimer);
+    workspace.classList.remove("auth-pending", "auth-locked", "auth-ready");
+    stage.setAttribute("aria-hidden", "true");
+    const finishUnlock = () => {
+      workspace.classList.remove("auth-unlocking");
+      workspace.classList.add("auth-ready");
+      workspace.removeAttribute("aria-busy");
+      app.authUnlockTimer = null;
+    };
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      finishUnlock();
+    } else {
+      workspace.classList.add("auth-unlocking");
+      workspace.setAttribute("aria-busy", "true");
+      app.authUnlockTimer = setTimeout(finishUnlock, 1280);
+    }
+  } else if (!loggedIn) {
+    clearTimeout(app.authUnlockTimer);
+    app.authUnlockTimer = null;
+    workspace.classList.remove("auth-pending", "auth-ready", "auth-unlocking");
+    workspace.classList.add("auth-locked");
+    workspace.removeAttribute("aria-busy");
+    stage.setAttribute("aria-hidden", "false");
+  } else if (!workspace.classList.contains("auth-unlocking")) {
+    workspace.classList.remove("auth-pending", "auth-locked");
+    workspace.classList.add("auth-ready");
+    stage.setAttribute("aria-hidden", "true");
+  }
+  app.authWasLoggedIn = loggedIn;
+}
+
 function renderState() {
   if (!app.state) return;
   $('userName').textContent = app.state.user?.name || "未登录";
+  const loggedIn = Boolean(app.state.user?.loggedIn);
+  $("loginBtn").classList.toggle("hidden", loggedIn);
+  $("switchAccountBtn").classList.toggle("hidden", !loggedIn);
+  $("logoutBtn").classList.toggle("hidden", !loggedIn);
   $("envLine").textContent = `${app.state.env.ffmpeg ? "FFmpeg 就绪" : "FFmpeg 未检测"} · ${app.state.env.aria2 ? "Aria2 就绪" : "Aria2 未检测"}`;
+  renderLoginStage(loggedIn);
   $("syncProgress").style.width = `${Math.round((app.state.sync?.progress || 0) * 100)}%`;
   const syncRunning = Boolean(app.state.sync?.running);
   if (window.BiliMotion) window.BiliMotion.setMetric("metricSync", syncRunning ? "Syncing" : "Idle");
@@ -1462,6 +1527,25 @@ function renderMetrics() {
     $("metricSelected").textContent = app.selected.size;
   }
   updateSelectAllControl();
+  renderDownloadAction();
+}
+
+function renderDownloadAction() {
+  const quality = $("quality")?.value || "1080";
+  const count = app.selected.size;
+  const highQuality = quality === "2K" || quality === "4K";
+  const hint = $("highQualityHint");
+  if (hint) {
+    hint.classList.toggle("hidden", !highQuality);
+    hint.textContent = highQuality
+      ? `${quality} 批量模式 · ${count} 个已选视频将逐个下载；原视频没有该清晰度时使用不超过目标的最高可用画质。`
+      : "";
+  }
+  if ($("startBtn")) {
+    $("startBtn").textContent = count
+      ? `批量下载 ${count} 个 · ${quality}`
+      : `启动下载 · ${quality}`;
+  }
 }
 
 function renderChart() {
@@ -1904,6 +1988,7 @@ function updateSelectedCard(bvid, selected) {
 function updateSelectionMetric() {
   if (window.BiliMotion) window.BiliMotion.setMetric("metricSelected", app.selected.size);
   else $("metricSelected").textContent = app.selected.size;
+  renderDownloadAction();
 }
 
 function updateSelectAllControl(items = filteredItems()) {
@@ -2852,18 +2937,37 @@ function bindEvents() {
   }).then(refresh).catch((error) => toast(error.message));
   $("pauseBtn").onclick = () => api("/api/download/pause", { method: "POST", body: {} }).then(refresh);
   $("cancelBtn").onclick = () => api("/api/download/cancel", { method: "POST", body: {} }).then(refresh);
-  $("loginBtn").onclick = async () => {
-    const data = await api("/api/login/qr", { method: "POST", body: {} });
-    showModal(`<h2>扫码登录</h2><p class="muted">使用哔哩哔哩 App 扫码</p><img class="qr" src="${data.image}" />`);
+  async function beginQrLogin(switching = false) {
+    const data = await api("/api/login/qr", { method: "POST", body: { switch: switching } });
+    const title = switching ? "切换 B站账号" : "扫码登录";
+    const note = switching
+      ? "新账号确认登录前，当前账号会保持不变。"
+      : "使用哔哩哔哩 App 扫码并确认登录。";
+    showModal(`<h2>${title}</h2><p class="muted">${note}</p><img class="qr" src="${data.image}" /><div id="qrLoginStatus" class="helper-text">等待扫码...</div>`);
     app.pollingQr = setInterval(async () => {
-      const result = await api(`/api/login/poll?key=${encodeURIComponent(data.key)}`);
-      if (result.code === 0) {
-        closeModal();
-        setTimeout(refresh, 900);
+      try {
+        const result = await api(`/api/login/poll?key=${encodeURIComponent(data.key)}`);
+        const status = $("qrLoginStatus");
+        if (status && result.message) status.textContent = result.message;
+        if (result.code === 0) {
+          closeModal();
+          toast(switching ? "账号切换成功，正在读取新账号信息" : "登录成功");
+          setTimeout(refresh, 900);
+        } else if (result.code === 86038 || result.code === -1) {
+          clearInterval(app.pollingQr);
+          app.pollingQr = null;
+        }
+      } catch (error) {
+        const status = $("qrLoginStatus");
+        if (status) status.textContent = error.message;
       }
     }, 2200);
-  };
+  }
+  $("loginBtn").onclick = () => beginQrLogin(false).catch((error) => toast(error.message));
+  $("loginStageBtn").onclick = () => beginQrLogin(false).catch((error) => toast(error.message));
+  $("switchAccountBtn").onclick = () => beginQrLogin(true).catch((error) => toast(error.message));
   $("logoutBtn").onclick = () => api("/api/logout", { method: "POST", body: {} }).then(refresh);
+  $("quality").onchange = renderDownloadAction;
   $("modalClose").onclick = closeModal;
   $("modal").onclick = (event) => {
     if (event.target.id === "modal") closeModal();

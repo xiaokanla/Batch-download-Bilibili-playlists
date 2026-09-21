@@ -48,6 +48,35 @@ class WbiSigner:
 
 class BiliResolver:
     @staticmethod
+    def stream_urls(stream):
+        """Return official CDN candidates, preferring regular UPOS over mCDN."""
+        if not isinstance(stream, dict):
+            return []
+
+        candidates = []
+        for key in ("baseUrl", "base_url", "url"):
+            value = stream.get(key)
+            if value:
+                candidates.append(str(value))
+        for key in ("backupUrl", "backup_url"):
+            values = stream.get(key) or []
+            if isinstance(values, str):
+                values = [values]
+            candidates.extend(str(value) for value in values if value)
+
+        unique = []
+        seen = set()
+        for url in candidates:
+            if not url.startswith(("http://", "https://")) or url in seen:
+                continue
+            seen.add(url)
+            unique.append(url)
+
+        # mCDN can be much slower on some networks. These are all URLs from the
+        # same playurl response, so changing their order adds no Bilibili API calls.
+        return sorted(unique, key=lambda url: ("mcdn" in urllib.parse.urlparse(url).netloc.lower(),))
+
+    @staticmethod
     def get_video_stream(bvid, sess, quality_label="1080"):
         try:
             view_url = f"https://api.bilibili.com/x/web-interface/view?bvid={bvid}"
@@ -82,15 +111,25 @@ class BiliResolver:
                     raise Exception("API未返回可用音频流")
                 best_audio = sorted(audio_streams, key=lambda x: x.get('bandwidth', 0), reverse=True)[0]
                 
+                video_urls = BiliResolver.stream_urls(best_video)
+                audio_urls = BiliResolver.stream_urls(best_audio)
+                if not video_urls or not audio_urls:
+                    raise Exception("API未返回可用音视频地址")
+
                 return {
                     'type': 'dash',
-                    'video_url': best_video['baseUrl'],
-                    'audio_url': best_audio['baseUrl'],
+                    'video_url': video_urls[0],
+                    'audio_url': audio_urls[0],
+                    'video_urls': video_urls,
+                    'audio_urls': audio_urls,
                     'title': title,
                     'quality_id': best_video['id']
                 }, title, duration
             elif 'durl' in data:
-                return {'type': 'durl', 'url': data['durl'][0]['url'], 'title': title}, title, duration
+                durl_urls = BiliResolver.stream_urls(data['durl'][0])
+                if not durl_urls:
+                    raise Exception("API未返回可用下载地址")
+                return {'type': 'durl', 'url': durl_urls[0], 'urls': durl_urls, 'title': title}, title, duration
             else: return None, None, 0
         except Exception as e:
             print(f"Resolver: {e}")

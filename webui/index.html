@@ -34,6 +34,7 @@
           <div class="helper-text">登录后才能读取你的收藏夹。只在本机保存登录状态。</div>
           <div class="row gap">
             <button id="loginBtn" class="btn primary">扫码登录</button>
+            <button id="switchAccountBtn" class="btn primary hidden">切换账号</button>
             <button id="logoutBtn" class="btn ghost">退出</button>
           </div>
         </section>
@@ -96,7 +97,28 @@
       </aside>
       <div id="railResizer" class="layout-resizer" role="separator" aria-orientation="vertical" aria-label="调整左侧栏宽度" title="拖动调整左侧栏宽度"></div>
 
-      <main class="workspace">
+      <main class="workspace auth-pending">
+        <section id="loginStage" class="login-stage" aria-labelledby="loginStageTitle">
+          <div class="login-stage-door login-stage-door-left" aria-hidden="true"></div>
+          <div class="login-stage-door login-stage-door-right" aria-hidden="true"></div>
+          <div class="login-stage-seam" aria-hidden="true"></div>
+          <div class="login-stage-content">
+            <div class="login-stage-mark" aria-hidden="true">
+              <span>B</span>
+              <i></i>
+            </div>
+            <div class="eyebrow">LOCAL SESSION</div>
+            <h2 id="loginStageTitle">连接你的 B站账号</h2>
+            <p>登录后，收藏夹、投稿列表和下载工具会在这里展开。</p>
+            <button id="loginStageBtn" class="btn primary login-stage-btn" type="button">扫码进入工作台</button>
+            <div class="login-stage-status" aria-label="下载环境状态">
+              <span id="loginStageFfmpeg"><i></i>FFmpeg 检测中</span>
+              <span id="loginStageAria"><i></i>Aria2 检测中</span>
+            </div>
+            <small>登录状态仅保存在这台电脑</small>
+          </div>
+        </section>
+
         <div id="workspaceControls" class="workspace-controls">
           <header class="top glass">
           <div>
@@ -268,11 +290,12 @@
               <option>1080</option>
               <option>720</option>
               <option>480</option>
-              <option>2K</option>
-              <option>4K</option>
+              <option value="2K">2K / 1440P 优先</option>
+              <option value="4K">4K / 2160P 优先</option>
             </select>
             <input id="speed" class="input" placeholder="限速 KB/s，可空" />
           </div>
+          <div id="highQualityHint" class="quality-hint hidden"></div>
           <label class="toggle"><input id="audioOnly" type="checkbox" /> 仅下载音频</label>
           <label class="toggle"><input id="allParts" type="checkbox" /> 下载所有分 P</label>
           <button id="startBtn" class="btn primary full">启动下载</button>

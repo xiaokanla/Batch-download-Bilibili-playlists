@@ -6,6 +6,9 @@ import random
 import re
 import subprocess
 import traceback  # 用于捕获详细错误
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from urllib.parse import urlparse
+
 import yt_dlp
 from yt_dlp.utils import DownloadError
 from config import ERROR_LOG
@@ -42,6 +45,7 @@ class DownloadWorker:
         self.is_cancelled = False
         self._yt_dlp_blocked_until = 0
         self._yt_dlp_412_count = 0
+        self._reported_quality_height = None
 
         # 进度更新节流
         self._last_progress_time = 0
@@ -73,6 +77,70 @@ class DownloadWorker:
         else:
             self.aria2_path = shutil.which('aria2c')
             self.has_aria2 = self.aria2_path is not None
+
+    @staticmethod
+    def _aria2_args(connections=8):
+        connections = max(1, min(8, int(connections or 1)))
+        return [
+            '-x', str(connections),
+            '-s', str(connections),
+            '-k', '1M',
+            '--min-split-size=1M',
+            '--max-tries=5',
+            '--retry-wait=2',
+            '--file-allocation=none',
+            '--continue=true',
+            '--auto-file-renaming=false',
+        ]
+
+    @staticmethod
+    def _target_height(quality):
+        return {
+            "4K": 2160,
+            "2K": 1440,
+            "1080": 1080,
+            "720": 720,
+            "480": 480,
+        }.get(str(quality), 0)
+
+    @classmethod
+    def _format_selector(cls, quality):
+        height = cls._target_height(quality)
+        if not height:
+            return "bestvideo+bestaudio/best"
+        return f"bestvideo[height={height}]+bestaudio/bestvideo[height<={height}]+bestaudio"
+
+    def _download_direct_stream(self, urls, output_path, base_opts, connections=8):
+        candidates = [str(url) for url in (urls or []) if str(url).startswith(('http://', 'https://'))]
+        if not candidates:
+            raise RuntimeError("没有可用的 CDN 下载地址")
+
+        last_error = None
+        use_aria2 = bool(self.has_aria2 and base_opts.get('external_downloader'))
+        transports = (True, False) if use_aria2 else (False,)
+        for transport_index, use_external in enumerate(transports):
+            for index, url in enumerate(candidates):
+                opts = base_opts.copy()
+                opts['outtmpl'] = output_path
+                if use_external:
+                    opts['external_downloader_args'] = {'aria2c': self._aria2_args(connections)}
+                else:
+                    opts.pop('external_downloader', None)
+                    opts.pop('external_downloader_args', None)
+                try:
+                    with yt_dlp.YoutubeDL(opts) as ydl:
+                        ydl.download([url])
+                    return
+                except Exception as exc:
+                    last_error = exc
+                    if self.is_cancelled or "USER_CANCEL" in str(exc):
+                        raise
+                    if index + 1 < len(candidates):
+                        host = urlparse(candidates[index + 1]).netloc or "备用 CDN"
+                        self.log_cb(f"⚡ 当前 CDN 不可用，切换到 {host}")
+            if use_external and transport_index + 1 < len(transports):
+                self.log_cb("⚠️ Aria2 直链下载失败，自动切换内置下载器")
+        raise last_error or RuntimeError("CDN 下载失败")
 
     def clean_filename(self, name, limit=80):
         name = re.sub(r'[\\/*?:"<>|]', "", name)
@@ -138,6 +206,14 @@ class DownloadWorker:
             except:
                 pass
         elif d['status'] == 'finished':
+            height = int((d.get('info_dict') or {}).get('height') or 0)
+            target = self._target_height(self.quality)
+            if height and height != self._reported_quality_height:
+                self._reported_quality_height = height
+                if target and height < target:
+                    self.log_cb(f"⚠️ 目标 {target}P 当前不可用，已使用最高可用的 {height}P")
+                else:
+                    self.log_cb(f"✅ 已选中 {height}P 视频流")
             self.progress_cb(1.0, "⚙️ 正在处理...", False)
 
     class MyLogger:
@@ -284,22 +360,13 @@ class DownloadWorker:
         cookie_file = self.cookie_gen()
         current_ua = self.session.headers.get('User-Agent', 'Mozilla/5.0')
 
-        # 策略判断：4K/2K 默认走 API；普通清晰度只在单个视频失败时 fallback。
-        prefer_api_mode = (self.quality in ["4K", "2K"])
+        # Let current yt-dlp resolve high-quality formats first. The simple API
+        # fallback cannot reliably distinguish 1440P from 1080P60 on every video.
+        prefer_api_mode = False
 
-        # 画质参数 - 改进格式选择器，确保包含音频
-        if self.quality == "4K":
-            format_str = "bestvideo[height=2160]+bestaudio/bestvideo[height<=2160]+bestaudio"
-        elif self.quality == "2K":
-            format_str = "bestvideo[height=1440]+bestaudio/bestvideo[height<=1440]+bestaudio"
-        elif self.quality == "1080":
-            format_str = "bestvideo[height=1080]+bestaudio/bestvideo[height<=1080]+bestaudio"
-        elif self.quality == "720":
-            format_str = "bestvideo[height=720]+bestaudio/bestvideo[height<=720]+bestaudio"
-        elif self.quality == "480":
-            format_str = "bestvideo[height=480]+bestaudio/bestvideo[height<=480]+bestaudio"
-        else:
-            format_str = "bestvideo+bestaudio/best"
+        # Exact target first, then the best stream below it when the source or
+        # current account does not provide the requested resolution.
+        format_str = self._format_selector(self.quality)
 
         try:
             for i, item in enumerate(self.items):
@@ -314,6 +381,7 @@ class DownloadWorker:
                     time.sleep(0.5)
 
                 item_started_at = time.time()
+                self._reported_quality_height = None
                 output_file = None
                 rate = self.speed_limit * 1024 if self.speed_limit > 0 else None
                 success = False
@@ -344,7 +412,7 @@ class DownloadWorker:
                     base_opts.update({
                         'external_downloader': self.aria2_path or 'aria2c',
                         # 保守提速：并发适中，避免触发站点风控
-                        'external_downloader_args': {'aria2c': ['-x','8','-s','8','-k','1M','--min-split-size=1M','--max-tries=5','--retry-wait=2','--file-allocation=none']}
+                        'external_downloader_args': {'aria2c': self._aria2_args(8)}
                     })
 
                 # === 模式1: 常规 yt-dlp ===
@@ -487,17 +555,34 @@ class DownloadWorker:
                                 a_tmp = os.path.join(self.save_dir, f"tmp_a_{int(time.time())}_{random.randint(1000,9999)}.m4a")
 
                                 try:
-                                    self.log_cb("📥 下载视频流...")
-                                    v_opt = base_opts.copy()
-                                    v_opt['outtmpl'] = v_tmp
-                                    with yt_dlp.YoutubeDL(v_opt) as ydl:
-                                        ydl.download([stream['video_url']])
-
-                                    self.log_cb("📥 下载音频流...")
-                                    a_opt = base_opts.copy()
-                                    a_opt['outtmpl'] = a_tmp
-                                    with yt_dlp.YoutubeDL(a_opt) as ydl:
-                                        ydl.download([stream['audio_url']])
+                                    video_urls = stream.get('video_urls') or [stream['video_url']]
+                                    audio_urls = stream.get('audio_urls') or [stream['audio_url']]
+                                    if self.speed_limit <= 0:
+                                        self.log_cb("⚡ 安全加速：音视频并行下载（总连接数不超过 8）")
+                                        jobs = (
+                                            ("视频", video_urls, v_tmp),
+                                            ("音频", audio_urls, a_tmp),
+                                        )
+                                        errors = []
+                                        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="bili-dash") as pool:
+                                            futures = {
+                                                pool.submit(self._download_direct_stream, urls, path, base_opts, 4): label
+                                                for label, urls, path in jobs
+                                            }
+                                            for future in as_completed(futures):
+                                                try:
+                                                    future.result()
+                                                except Exception as exc:
+                                                    errors.append((futures[future], exc))
+                                        if errors:
+                                            label, error = errors[0]
+                                            raise RuntimeError(f"{label}流下载失败: {error}") from error
+                                    else:
+                                        # Keep limited downloads serial so the configured cap remains global.
+                                        self.log_cb("📥 下载视频流...")
+                                        self._download_direct_stream(video_urls, v_tmp, base_opts, 8)
+                                        self.log_cb("📥 下载音频流...")
+                                        self._download_direct_stream(audio_urls, a_tmp, base_opts, 8)
 
                                     self.log_cb("⚙️ 正在合并音视频...")
 
@@ -581,10 +666,8 @@ class DownloadWorker:
                             else:
                                 url = stream.get('audio_url') if self.is_audio_only else None
                                 url = url or stream.get('url') or stream.get('video_url')
-                                d_opt = base_opts.copy()
-                                d_opt['outtmpl'] = f_path
-                                with yt_dlp.YoutubeDL(d_opt) as ydl:
-                                    ydl.download([url])
+                                urls = stream.get('audio_urls') if self.is_audio_only else stream.get('urls')
+                                self._download_direct_stream(urls or [url], f_path, base_opts, 8)
 
                                 # 验证音频
                                 if self.is_audio_only or self._verify_audio_stream(f_path):
