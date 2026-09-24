@@ -92,6 +92,11 @@ class SQLiteStore:
                 (str(self.SCHEMA_VERSION), time.time()),
             )
 
+    def checkpoint(self) -> None:
+        """Flush the WAL before copying the database to another data directory."""
+        with self.lock, self._connection() as connection:
+            connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+
     @staticmethod
     def _read_json(path: str | os.PathLike[str], default: Any) -> Any:
         try:

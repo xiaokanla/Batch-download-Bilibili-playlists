@@ -1,5 +1,6 @@
 import base64
 import datetime
+import hashlib
 import io
 import json
 import math
@@ -34,7 +35,7 @@ APP_DIR = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else 
 WEB_DIR = os.path.join(RESOURCE_DIR, "webui")
 DEFAULT_USERDATA_DIR = os.path.join(APP_DIR, "userdata")
 BOOTSTRAP_SETTINGS_PATH = os.path.join(DEFAULT_USERDATA_DIR, "app_settings.json")
-APP_VERSION = "1.4.5"
+APP_VERSION = "1.4.6"
 APP_FLAVOR = "release"
 
 
@@ -82,6 +83,95 @@ def configure_userdata_paths(data_dir):
     os.makedirs(USERDATA_DIR, exist_ok=True)
 
 
+def cache_path_stats(path):
+    """Return a lightweight size summary without exposing file contents."""
+    target = Path(path).expanduser()
+    if not target.exists():
+        return {"exists": False, "bytes": 0, "files": 0}
+    if target.is_file():
+        try:
+            return {"exists": True, "bytes": target.stat().st_size, "files": 1}
+        except OSError:
+            return {"exists": True, "bytes": 0, "files": 1}
+    total = 0
+    files = 0
+    for root, dirnames, filenames in os.walk(target, followlinks=False):
+        dirnames[:] = [name for name in dirnames if not (Path(root) / name).is_symlink()]
+        for name in filenames:
+            item = Path(root) / name
+            if item.is_symlink():
+                continue
+            try:
+                total += item.stat().st_size
+                files += 1
+            except OSError:
+                continue
+    return {"exists": True, "bytes": total, "files": files}
+
+
+def validate_cache_migration_paths(source, destination, allow_bootstrap=False):
+    source_path = Path(source).expanduser().resolve()
+    destination_path = Path(destination).expanduser().resolve()
+    if source_path == destination_path:
+        raise RuntimeError("新旧缓存目录不能相同")
+    try:
+        destination_path.relative_to(source_path)
+        raise RuntimeError("新目录不能放在旧缓存目录内部")
+    except ValueError:
+        pass
+    try:
+        source_path.relative_to(destination_path)
+        raise RuntimeError("新目录不能是旧缓存目录的上级目录")
+    except ValueError:
+        pass
+    if destination_path.exists():
+        if not destination_path.is_dir():
+            raise RuntimeError("新缓存位置不是文件夹")
+        try:
+            entries = list(destination_path.iterdir())
+            bootstrap_only = allow_bootstrap and all(item.name == "app_settings.json" for item in entries)
+            if entries and not bootstrap_only:
+                raise RuntimeError("请选择一个空文件夹作为新缓存位置")
+        except OSError as exc:
+            raise RuntimeError(f"无法读取新缓存目录：{exc}") from exc
+    return source_path, destination_path
+
+
+def collect_cache_files(source):
+    source_path = Path(source).expanduser().resolve()
+    if not source_path.exists():
+        return []
+    files = []
+    for root, dirnames, filenames in os.walk(source_path, followlinks=False):
+        for name in list(dirnames):
+            if (Path(root) / name).is_symlink():
+                raise RuntimeError("缓存目录中包含符号链接，为避免误处理已停止迁移")
+        for name in filenames:
+            item = Path(root) / name
+            if item.is_symlink():
+                raise RuntimeError("缓存目录中包含符号链接，为避免误处理已停止迁移")
+            files.append((item, item.relative_to(source_path), item.stat().st_size))
+    return files
+
+
+def files_have_same_content(first, second, chunk_size=1024 * 1024):
+    first_path = Path(first)
+    second_path = Path(second)
+    if not second_path.is_file() or first_path.stat().st_size != second_path.stat().st_size:
+        return False
+    first_hash = hashlib.sha256()
+    second_hash = hashlib.sha256()
+    with first_path.open("rb") as first_stream, second_path.open("rb") as second_stream:
+        while True:
+            first_chunk = first_stream.read(chunk_size)
+            second_chunk = second_stream.read(chunk_size)
+            if not first_chunk and not second_chunk:
+                break
+            first_hash.update(first_chunk)
+            second_hash.update(second_chunk)
+    return first_hash.digest() == second_hash.digest()
+
+
 class WebBiliApp:
     def __init__(self):
         self.lock = threading.RLock()
@@ -103,6 +193,7 @@ class WebBiliApp:
         self.download_tag_queue = queue.Queue()
         self.download_tag_pending = set()
         self.download_tag_worker = None
+        self.background_cache_writes = 0
         self.qr_login_sessions = {}
         self.tag_task = {
             "running": False,
@@ -139,10 +230,11 @@ class WebBiliApp:
         self.settings.update(self.load_json_file(APP_SETTINGS_PATH, {}))
         self.settings["dataDir"] = self.settings.get("dataDir") or USERDATA_DIR
         configure_userdata_paths(self.settings["dataDir"])
+        self._adopt_legacy_sidecars()
         self.db = SQLiteStore(USERDATA_DIR)
         manager_module.BASE_DIR = USERDATA_DIR
-        manager_module.NETSCAPE_TEMP = os.path.join(APP_DIR, "bili_netscape_temp.txt")
-        manager_module.LAST_LOGIN_COOKIE = os.path.join(APP_DIR, "last_login_cookie.json")
+        manager_module.NETSCAPE_TEMP = os.path.join(USERDATA_DIR, "bili_netscape_temp.txt")
+        manager_module.LAST_LOGIN_COOKIE = os.path.join(USERDATA_DIR, "last_login_cookie.json")
         self.mgr = BiliManager()
         self.apply_runtime_paths()
         self.download_records = self.load_json_file(DOWNLOAD_RECORDS_PATH, {})
@@ -189,21 +281,48 @@ class WebBiliApp:
             "title": "等待任务",
             "status": "Ready",
         }
+        self.cache_migration = {
+            "running": False,
+            "kind": "",
+            "source": "",
+            "destination": "",
+            "totalBytes": 0,
+            "copiedBytes": 0,
+            "progress": 0,
+            "status": "Idle",
+            "error": "",
+            "removeSource": False,
+        }
         self.user = {"loggedIn": False, "name": "未登录", "mid": "guest"}
         self.env = self.check_env_tools()
         self.auto_login()
 
     def _reset_sidecar_files(self):
-        targets = [
-            os.path.join(APP_DIR, "last_login_cookie.json"),
-            os.path.join(APP_DIR, "bili_netscape_temp.txt"),
-            os.path.join(APP_DIR, "error_log.txt"),
-        ]
+        targets = []
+        for root in {APP_DIR, USERDATA_DIR}:
+            targets.extend([
+                os.path.join(root, "last_login_cookie.json"),
+                os.path.join(root, "bili_netscape_temp.txt"),
+            ])
+        targets.append(os.path.join(APP_DIR, "error_log.txt"))
         for path in targets:
             try:
                 if os.path.isfile(path):
                     os.remove(path)
             except Exception:
+                pass
+
+    def _adopt_legacy_sidecars(self):
+        """Move future session writes into userdata while keeping old installs logged in."""
+        os.makedirs(USERDATA_DIR, exist_ok=True)
+        for name in ("last_login_cookie.json", "bili_netscape_temp.txt"):
+            legacy = Path(APP_DIR) / name
+            current = Path(USERDATA_DIR) / name
+            if current.exists() or not legacy.is_file():
+                continue
+            try:
+                shutil.copy2(legacy, current)
+            except OSError:
                 pass
 
     def _remove_path(self, path):
@@ -251,8 +370,8 @@ class WebBiliApp:
         VIDEO_TAG_DIR = os.path.join(USERDATA_DIR, "video_tags")
         APP_SETTINGS_PATH = os.path.join(USERDATA_DIR, "app_settings.json")
         manager_module.BASE_DIR = USERDATA_DIR
-        manager_module.NETSCAPE_TEMP = os.path.join(APP_DIR, "bili_netscape_temp.txt")
-        manager_module.LAST_LOGIN_COOKIE = os.path.join(APP_DIR, "last_login_cookie.json")
+        manager_module.NETSCAPE_TEMP = os.path.join(USERDATA_DIR, "bili_netscape_temp.txt")
+        manager_module.LAST_LOGIN_COOKIE = os.path.join(USERDATA_DIR, "last_login_cookie.json")
         with self.lock:
             self.settings = {
                 "dataDir": USERDATA_DIR,
@@ -268,6 +387,7 @@ class WebBiliApp:
             self.creator_search_cache = {}
             self.tag_cache = {}
             self.download_tag_pending = set()
+            self.background_cache_writes = 0
             self.qr_login_sessions = {}
             self.eagle = {
                 "libraryDir": "",
@@ -324,6 +444,18 @@ class WebBiliApp:
                 "paused": False,
                 "cancelled": False,
                 "type": "",
+            }
+            self.cache_migration = {
+                "running": False,
+                "kind": "",
+                "source": "",
+                "destination": "",
+                "totalBytes": 0,
+                "copiedBytes": 0,
+                "progress": 0,
+                "status": "Idle",
+                "error": "",
+                "removeSource": False,
             }
             self.save_json_file(APP_SETTINGS_PATH, self.settings)
             self._remove_path(BOOTSTRAP_SETTINGS_PATH)
@@ -416,6 +548,8 @@ class WebBiliApp:
         configure_userdata_paths(self.settings.get("dataDir") or DEFAULT_USERDATA_DIR)
         self.db = SQLiteStore(USERDATA_DIR)
         manager_module.BASE_DIR = USERDATA_DIR
+        manager_module.NETSCAPE_TEMP = os.path.join(USERDATA_DIR, "bili_netscape_temp.txt")
+        manager_module.LAST_LOGIN_COOKIE = os.path.join(USERDATA_DIR, "last_login_cookie.json")
         if hasattr(self, "mgr"):
             self.mgr.store = SQLiteStore(USERDATA_DIR)
             self.mgr.init_paths()
@@ -969,6 +1103,279 @@ class WebBiliApp:
         summary = {2: "需要处理", 1: "可用但有建议", 0: "状态良好"}[summary_level]
         return {"ok": True, "summary": summary, "items": items}
 
+    def cache_locations(self):
+        with self.lock:
+            settings = dict(self.settings)
+            task = dict(self.cache_migration)
+        data_dir = os.path.abspath(settings.get("dataDir") or USERDATA_DIR)
+        eagle_dir = os.path.abspath(settings.get("eagleExportDir") or os.path.join(APP_DIR, "eagle_exports"))
+        download_dir = str(settings.get("downloadDir") or "").strip()
+        error_log = os.path.abspath(settings.get("errorLogPath") or os.path.join(APP_DIR, "error_log.txt"))
+        definitions = [
+            {
+                "key": "data",
+                "label": "程序数据总目录",
+                "path": data_dir,
+                "description": "数据库、下载记录、登录状态、收藏夹与搜索缓存。",
+                "migratable": True,
+            },
+            {
+                "key": "database",
+                "label": "SQLite 数据库",
+                "path": os.path.join(data_dir, "bili_downloader.db"),
+                "description": "下载历史、收藏夹、标签和搜索缓存的主存储。",
+                "migratable": False,
+            },
+            {
+                "key": "favorites",
+                "label": "收藏夹 JSON 镜像",
+                "path": os.path.join(data_dir, "_web_cache"),
+                "description": "用于快速恢复列表的本地镜像。",
+                "migratable": False,
+            },
+            {
+                "key": "tags",
+                "label": "单视频标签缓存",
+                "path": os.path.join(data_dir, "video_tags"),
+                "description": "下载和 Eagle 导入时复用的 B站标签文件。",
+                "migratable": False,
+            },
+            {
+                "key": "eagle",
+                "label": "Eagle 生成缓存",
+                "path": eagle_dir,
+                "description": "封面、套图、弹幕 XML、缩略图备份和导入清单。",
+                "migratable": True,
+            },
+            {
+                "key": "downloads",
+                "label": "默认下载目录",
+                "path": download_dir,
+                "description": "视频原文件，不属于缓存，缓存迁移不会搬动它。",
+                "migratable": False,
+            },
+            {
+                "key": "logs",
+                "label": "错误日志",
+                "path": error_log,
+                "description": "下载或工具执行失败时的本地记录。",
+                "migratable": False,
+            },
+        ]
+        items = []
+        for definition in definitions:
+            path = definition["path"]
+            stats = cache_path_stats(path) if path else {"exists": False, "bytes": 0, "files": 0}
+            items.append({**definition, **stats})
+        return {"ok": True, "items": items, "task": task}
+
+    def open_cache_location(self, key):
+        locations = {item["key"]: item for item in self.cache_locations()["items"]}
+        item = locations.get(str(key or ""))
+        if not item or not item.get("path"):
+            raise RuntimeError("该位置尚未设置")
+        target = Path(item["path"])
+        if target.is_file():
+            target = target.parent
+        elif not target.exists() and item["key"] in {"data", "favorites", "tags", "eagle", "downloads"}:
+            target.mkdir(parents=True, exist_ok=True)
+        if not target.is_dir():
+            raise RuntimeError("该位置不存在")
+        os.startfile(str(target))
+        return {"ok": True, "path": str(target)}
+
+    def _cache_migration_busy(self):
+        return bool(
+            self.sync_running
+            or self.creator_sync_running
+            or self.tag_task.get("running")
+            or self.download.get("running")
+            or self.eagle_task.get("running")
+            or bool(self.download_tag_pending)
+            or self.background_cache_writes > 0
+        )
+
+    def _flush_program_data(self):
+        self.mgr.save_data()
+        self.save_json_file(DOWNLOAD_RECORDS_PATH, self.download_records)
+        self.save_json_file(BILI_SEARCH_CACHE_PATH, self.bili_search_cache)
+        self.save_json_file(BILI_CREATOR_SEARCH_CACHE_PATH, self.creator_search_cache)
+        self.save_json_file(BILI_TAG_CACHE_PATH, self.tag_cache)
+        self.save_json_file(EAGLE_CONFIG_PATH, self.eagle)
+        self.save_json_file(EAGLE_INDEX_PATH, self.eagle_index)
+        self.save_json_file(APP_SETTINGS_PATH, self.settings, sync_db=False)
+        self.db.checkpoint()
+
+    def start_cache_migration(self, payload):
+        kind = str(payload.get("kind") or "").strip().lower()
+        destination = str(payload.get("destination") or "").strip()
+        remove_source = bool(payload.get("removeSource"))
+        if kind not in {"data", "eagle"}:
+            raise RuntimeError("请选择要迁移的缓存类型")
+        if not destination:
+            raise RuntimeError("请选择新缓存目录")
+        with self.lock:
+            if self.cache_migration.get("running"):
+                raise RuntimeError("缓存迁移正在进行")
+            if self._cache_migration_busy():
+                raise RuntimeError("请先停止同步、标签、下载或 Eagle 任务")
+            source = (
+                self.settings.get("dataDir") or USERDATA_DIR
+                if kind == "data"
+                else self.settings.get("eagleExportDir") or os.path.join(APP_DIR, "eagle_exports")
+            )
+            allow_bootstrap = kind == "data" and Path(destination).expanduser().resolve() == Path(DEFAULT_USERDATA_DIR).resolve()
+            source_path, destination_path = validate_cache_migration_paths(source, destination, allow_bootstrap=allow_bootstrap)
+            if kind == "data":
+                self._flush_program_data()
+            files = collect_cache_files(source_path)
+            total_bytes = sum(size for _, _, size in files)
+            self.cache_migration = {
+                "running": True,
+                "kind": kind,
+                "source": str(source_path),
+                "destination": str(destination_path),
+                "totalBytes": total_bytes,
+                "copiedBytes": 0,
+                "progress": 0,
+                "status": "准备复制缓存",
+                "error": "",
+                "removeSource": remove_source,
+            }
+        thread = threading.Thread(
+            target=self._cache_migration_worker,
+            args=(kind, source_path, destination_path, files, remove_source),
+            daemon=True,
+        )
+        thread.start()
+        return {"ok": True, "started": True, "task": dict(self.cache_migration)}
+
+    def _set_cache_migration_progress(self, **values):
+        with self.lock:
+            self.cache_migration.update(values)
+
+    @staticmethod
+    def _verify_cache_file_contents(destination, files):
+        for source_file, relative, _ in files:
+            destination_file = destination / relative
+            if not files_have_same_content(source_file, destination_file):
+                raise RuntimeError(f"校验失败，已保留旧文件：{relative}")
+
+    @staticmethod
+    def _remove_migrated_cache_files(source, files):
+        for source_file, _, _ in files:
+            source_file.unlink(missing_ok=True)
+        directories = [Path(root) for root, _, _ in os.walk(source, topdown=False)]
+        for directory in directories:
+            try:
+                directory.rmdir()
+            except OSError:
+                pass
+
+    def _cache_migration_worker(self, kind, source, destination, files, remove_source):
+        with self.lock:
+            previous_settings = dict(self.settings)
+        switched = False
+        try:
+            destination.mkdir(parents=True, exist_ok=True)
+            copied = 0
+            total = sum(size for _, _, size in files)
+            for source_file, relative, size in files:
+                destination_file = destination / relative
+                destination_file.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source_file, destination_file)
+                copied += size
+                progress = copied / total if total else 1
+                self._set_cache_migration_progress(
+                    copiedBytes=copied,
+                    progress=min(0.94, progress * 0.94),
+                    status=f"正在复制：{relative}",
+                )
+            self._set_cache_migration_progress(progress=0.96, status="正在校验已复制文件")
+            for _, relative, size in files:
+                destination_file = destination / relative
+                if not destination_file.is_file() or destination_file.stat().st_size != size:
+                    raise RuntimeError(f"迁移校验失败：{relative}")
+            if remove_source and source.exists():
+                self._set_cache_migration_progress(progress=0.97, status="正在完整校验新旧缓存")
+                self._verify_cache_file_contents(destination, files)
+
+            with self.lock:
+                if kind == "data":
+                    self.settings["dataDir"] = str(destination)
+                else:
+                    self.settings["eagleExportDir"] = str(destination)
+                next_settings = dict(self.settings)
+
+            if kind == "data":
+                self.save_json_file(destination / "app_settings.json", next_settings, sync_db=False)
+                self.save_json_file(BOOTSTRAP_SETTINGS_PATH, next_settings, sync_db=False)
+                with self.lock:
+                    self.apply_runtime_paths()
+                switched = True
+            else:
+                self.save_json_file(APP_SETTINGS_PATH, next_settings, sync_db=False)
+                self.save_json_file(BOOTSTRAP_SETTINGS_PATH, next_settings, sync_db=False)
+                with self.lock:
+                    self.apply_runtime_paths()
+                switched = True
+
+            cleanup_warning = ""
+            if remove_source and source.exists():
+                self._set_cache_migration_progress(progress=0.99, status="已切换新位置，正在清理旧缓存")
+                try:
+                    cleanup_files = files
+                    if kind == "data" and source.resolve() == Path(DEFAULT_USERDATA_DIR).resolve():
+                        # Keep the bootstrap pointer in the default location so the
+                        # next launch can discover the migrated data directory.
+                        cleanup_files = [
+                            item for item in files if item[1].as_posix() != "app_settings.json"
+                        ]
+                    self._remove_migrated_cache_files(source, cleanup_files)
+                except OSError as exc:
+                    cleanup_warning = f"；旧缓存未完全清理：{exc}"
+            if kind == "data":
+                # The bootstrap pointer lives in the default userdata folder,
+                # which may itself have been the old directory just cleaned.
+                try:
+                    self.save_json_file(BOOTSTRAP_SETTINGS_PATH, next_settings, sync_db=False)
+                except OSError as exc:
+                    cleanup_warning = f"；启动指针写入失败，请勿删除旧目录：{exc}"
+
+            self._set_cache_migration_progress(
+                running=False,
+                copiedBytes=total,
+                progress=1,
+                status=f"迁移完成，已切换到新位置{cleanup_warning}",
+                error=cleanup_warning.lstrip("；"),
+            )
+            self.log(f"缓存迁移完成：{source} -> {destination}")
+        except Exception as exc:
+            if not switched:
+                try:
+                    with self.lock:
+                        self.settings = previous_settings
+                        previous_data_dir = previous_settings.get("dataDir") or USERDATA_DIR
+                        self.save_json_file(
+                            os.path.join(previous_data_dir, "app_settings.json"),
+                            previous_settings,
+                            sync_db=False,
+                        )
+                        self.save_json_file(BOOTSTRAP_SETTINGS_PATH, previous_settings, sync_db=False)
+                        self.apply_runtime_paths()
+                except Exception as rollback_exc:
+                    exc = RuntimeError(f"{exc}；恢复原路径时失败：{rollback_exc}")
+            self._set_cache_migration_progress(
+                running=False,
+                status=(
+                    "迁移已切换新位置，但收尾操作失败"
+                    if switched
+                    else "迁移失败，已恢复原缓存位置"
+                ),
+                error=str(exc),
+            )
+            self.log(f"缓存迁移失败：{exc}")
+
     def log(self, message):
         with self.lock:
             self.logs.append({"time": datetime.datetime.now().strftime("%H:%M:%S"), "text": str(message)})
@@ -998,6 +1405,7 @@ class WebBiliApp:
                 "sync": {"running": self.sync_running, "progress": self.sync_progress},
                 "creatorSync": {"running": self.creator_sync_running, "progress": self.creator_sync_progress},
                 "download": self.download,
+                "cacheMigration": self.cache_migration,
                 "build": {"version": APP_VERSION, "flavor": APP_FLAVOR},
             }
 
@@ -1923,6 +2331,9 @@ class WebBiliApp:
         if not bvid:
             return
 
+        with self.lock:
+            self.background_cache_writes += 1
+
         def _task():
             try:
                 from import_videos_to_eagle import DANMAKU_CACHE_DIR, danmaku_xml_cache_path, parse_danmaku_xml_times
@@ -1959,8 +2370,16 @@ class WebBiliApp:
                 self.log(f"Danmaku XML cached: {bvid}")
             except Exception as exc:
                 self.log(f"Danmaku XML cache skipped {bvid}: {str(exc)[:120]}")
+            finally:
+                with self.lock:
+                    self.background_cache_writes = max(0, self.background_cache_writes - 1)
 
-        threading.Thread(target=_task, daemon=True).start()
+        try:
+            threading.Thread(target=_task, daemon=True).start()
+        except Exception:
+            with self.lock:
+                self.background_cache_writes = max(0, self.background_cache_writes - 1)
+            raise
 
     def set_eagle_config(self, payload):
         with self.lock:
@@ -2978,6 +3397,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(APP.public_state())
             if path == "/api/app-info":
                 return self.send_json({"name": "BiliDownloader Studio", "version": APP_VERSION, "flavor": APP_FLAVOR})
+            if path == "/api/cache/locations":
+                return self.send_json(APP.cache_locations())
             if path == "/api/image":
                 url = parse_qs(parsed.query).get("url", [""])[0]
                 return self.send_image_proxy(url)
@@ -2993,6 +3414,13 @@ class Handler(BaseHTTPRequestHandler):
         path = parsed.path
         try:
             payload = self.read_json()
+            if APP.cache_migration.get("running") and path not in {
+                "/api/cache/open-location",
+                "/api/choose-dir",
+                "/api/choose-file",
+                "/api/diagnostics",
+            }:
+                return self.send_json({"error": "缓存迁移进行中，完成前暂停其他写入操作"}, 409)
             if path == "/api/login/qr":
                 return self.send_json(APP.qr_login_generate(bool(payload.get("switch"))))
             if path == "/api/logout":
@@ -3034,6 +3462,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(APP.set_app_settings(payload))
             if path == "/api/diagnostics":
                 return self.send_json(APP.run_diagnostics())
+            if path == "/api/cache/migrate":
+                return self.send_json(APP.start_cache_migration(payload))
+            if path == "/api/cache/open-location":
+                return self.send_json(APP.open_cache_location(payload.get("key", "")))
             if path == "/api/reset":
                 if APP_FLAVOR != "test":
                     return self.send_json({"error": "恢复初始状态只在测试版开放"}, 403)

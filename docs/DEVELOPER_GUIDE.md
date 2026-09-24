@@ -80,6 +80,9 @@ SQLite，再写 JSON 镜像，以兼容旧版程序和 Eagle 独立脚本。
 - `POST /api/eagle/import`：导入已下载视频到 Eagle。
 - `POST /api/eagle/folder-thumbnails`：修复 Eagle 文件夹内本地视频缩略图。
 - `POST /api/settings`：保存路径设置。
+- `GET /api/cache/locations`：返回程序数据、SQLite、收藏夹镜像、标签、Eagle 生成缓存、下载目录和日志的位置与占用。
+- `POST /api/cache/migrate`：后台迁移缓存；参数为 `kind` (`data`/`eagle`)、`destination` 和可选的 `removeSource`。
+- `POST /api/cache/open-location`：在资源管理器中打开指定缓存位置。
 
 ## 4. 下载流程
 

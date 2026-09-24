@@ -340,6 +340,9 @@ const app = {
   eagleFoldersLoading: false,
   diagnostics: null,
   diagnosticsLoading: false,
+  cacheInfo: null,
+  cacheLocationsLoading: false,
+  cacheMigrationWasRunning: false,
   contextMenuBvid: "",
   creatorCandidates: [],
   selectedCreatorMid: "",
@@ -762,6 +765,7 @@ function renderState() {
   renderDownload();
   renderEagle();
   renderDiagnostics();
+  renderCacheManager();
   renderGuide();
   renderSettings();
   renderLogs();
@@ -1925,6 +1929,137 @@ async function runDiagnostics() {
   }
 }
 
+function formatCacheBytes(value) {
+  let bytes = Math.max(0, Number(value) || 0);
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let unit = 0;
+  while (bytes >= 1024 && unit < units.length - 1) {
+    bytes /= 1024;
+    unit += 1;
+  }
+  const digits = unit === 0 ? 0 : bytes >= 100 ? 0 : bytes >= 10 ? 1 : 2;
+  return `${bytes.toFixed(digits)} ${units[unit]}`;
+}
+
+function renderCacheManager() {
+  const list = $("cacheLocationList");
+  const summary = $("cacheSummary");
+  const refreshButton = $("refreshCacheBtn");
+  const migrateButton = $("startCacheMigrationBtn");
+  const task = app.state?.cacheMigration || app.cacheInfo?.task || {};
+  if (!list || !summary) return;
+
+  const running = Boolean(task.running);
+  const progress = Math.max(0, Math.min(1, Number(task.progress) || 0));
+  $("cacheMigrationProgress").style.width = `${Math.round(progress * 100)}%`;
+  $("cacheMigrationStatus").textContent = task.error || task.status || "Idle";
+  if (migrateButton) {
+    migrateButton.disabled = running;
+    migrateButton.textContent = running ? `正在迁移 ${Math.round(progress * 100)}%` : "开始迁移";
+    migrateButton.classList.toggle("is-busy", running);
+  }
+  if (refreshButton) {
+    refreshButton.disabled = app.cacheLocationsLoading || running;
+    refreshButton.textContent = app.cacheLocationsLoading ? "读取中" : "查看";
+  }
+  window.BiliMotion?.setActivity("cacheMigrationProgress", running, "startCacheMigrationBtn");
+  if (running) expandPanelForActivity("cache");
+
+  const items = app.cacheInfo?.items || [];
+  if (items.length) {
+    const roots = items.filter((item) => item.key === "data" || item.key === "eagle");
+    const totalBytes = roots.reduce((sum, item) => sum + (Number(item.bytes) || 0), 0);
+    summary.textContent = `${roots.length} 类可迁移缓存 · ${formatCacheBytes(totalBytes)}`;
+    const signature = JSON.stringify(items.map((item) => [item.key, item.path, item.bytes, item.files, item.exists]));
+    if (list.dataset.signature !== signature) {
+      list.dataset.signature = signature;
+      list.innerHTML = items.map((item) => {
+        const path = item.path || "未设置";
+        const state = item.exists ? `${formatCacheBytes(item.bytes)} · ${Number(item.files || 0)} 个文件` : "目录尚未生成";
+        return `
+          <div class="cache-location-item ${item.migratable ? "migratable" : ""}">
+            <div class="cache-location-copy">
+              <div class="cache-location-title">
+                <strong>${escapeHtml(item.label || item.key)}</strong>
+                ${item.migratable ? `<em>可迁移</em>` : ""}
+              </div>
+              <div class="cache-location-path" title="${escapeAttr(path)}">${escapeHtml(path)}</div>
+              <div class="cache-location-meta">${escapeHtml(state)} · ${escapeHtml(item.description || "")}</div>
+            </div>
+            <button class="icon-btn cache-open-btn" type="button" data-cache-key="${escapeAttr(item.key)}" title="打开所在位置" aria-label="打开${escapeAttr(item.label || item.key)}位置">↗</button>
+          </div>
+        `;
+      }).join("");
+      list.querySelectorAll(".cache-open-btn").forEach((button) => {
+        button.onclick = () => api("/api/cache/open-location", {
+          method: "POST",
+          body: { key: button.dataset.cacheKey },
+        }).catch((error) => toast(error.message));
+      });
+    }
+  } else if (app.cacheLocationsLoading) {
+    list.innerHTML = `<div class="muted">正在统计缓存位置和占用...</div>`;
+  }
+
+  const migrationJustFinished = app.cacheMigrationWasRunning && !running;
+  app.cacheMigrationWasRunning = running;
+  if (migrationJustFinished) {
+    loadCacheLocations().catch((error) => toast(error.message));
+    const completed = Number(task.progress) >= 1;
+    toast(
+      completed
+        ? (task.error ? `缓存迁移完成，但有提示：${task.error}` : "缓存迁移完成")
+        : `缓存迁移未完成：${task.error || task.status || "未知错误"}`,
+    );
+  }
+}
+
+async function loadCacheLocations() {
+  if (app.cacheLocationsLoading) return;
+  app.cacheLocationsLoading = true;
+  renderCacheManager();
+  try {
+    app.cacheInfo = await api("/api/cache/locations");
+  } finally {
+    app.cacheLocationsLoading = false;
+    renderCacheManager();
+  }
+}
+
+function openCacheMigrationConfirm() {
+  const kind = $("cacheMigrationKind")?.value || "data";
+  const destination = $("cacheMigrationTarget")?.value.trim() || "";
+  const removeSource = Boolean($("cacheRemoveSource")?.checked);
+  if (!destination) return toast("请先选择新缓存目录");
+  const label = kind === "data" ? "程序数据与登录缓存" : "Eagle 封面与弹幕缓存";
+  showModal(`
+    <h2>确认迁移缓存</h2>
+    <p>将把<strong>${escapeHtml(label)}</strong>复制到：</p>
+    <div class="modal-path">${escapeHtml(destination)}</div>
+    <p class="muted">${removeSource ? "复制完成后会逐个校验文件，只清理确认一致的旧缓存。" : "原目录会保留作为备份，程序将切换到新位置。"}</p>
+    <div class="modal-actions">
+      <button id="confirmCacheMigrationBtn" class="btn ${removeSource ? "danger" : "primary"}" type="button">确认开始</button>
+      <button id="cancelCacheMigrationBtn" class="btn ghost" type="button">取消</button>
+    </div>
+  `);
+  $("cancelCacheMigrationBtn").onclick = closeModal;
+  $("confirmCacheMigrationBtn").onclick = async () => {
+    $("confirmCacheMigrationBtn").disabled = true;
+    try {
+      await api("/api/cache/migrate", {
+        method: "POST",
+        body: { kind, destination, removeSource },
+      });
+      closeModal();
+      toast("缓存迁移已开始");
+      await refresh();
+    } catch (error) {
+      $("confirmCacheMigrationBtn").disabled = false;
+      toast(error.message);
+    }
+  };
+}
+
 function renderEagleFolders(selectedId = "") {
   const select = $("eagleFolder");
   if (!select) return;
@@ -2316,11 +2451,12 @@ function openHelpGuide() {
       <section>
         <h3>路径设置</h3>
         <ul>
-          <li>程序数据目录：保存登录状态、下载历史、收藏夹缓存和设置。修改后需要重启。</li>
+          <li>程序数据目录：保存登录状态、下载历史、收藏夹缓存和设置。</li>
           <li>默认下载目录：视频保存位置。</li>
           <li>FFmpeg / FFprobe / Aria2：留空会使用内置或系统工具。</li>
           <li>Eagle 导出/缓存目录：保存封面套图、弹幕缓存等中间文件。</li>
           <li>错误日志文件：保存失败原因，排查问题时有用。</li>
+          <li>需要搬动已有数据时，请使用“缓存管理”的迁移功能；直接改路径只会切换位置，不会复制旧文件。</li>
         </ul>
       </section>
 
@@ -2464,6 +2600,9 @@ function bindSettingsEvents() {
   $("pickAria2Path").onclick = () => pickFileTo("settingAria2Path");
   $("pickEagleExportDir").onclick = () => pickDirTo("settingEagleExportDir");
   $("pickErrorLogPath").onclick = () => pickFileTo("settingErrorLogPath");
+  $("pickCacheTargetBtn").onclick = () => pickDirTo("cacheMigrationTarget");
+  $("refreshCacheBtn").onclick = () => loadCacheLocations().catch((error) => toast(error.message));
+  $("startCacheMigrationBtn").onclick = openCacheMigrationConfirm;
   $("saveSettingsBtn").onclick = () => saveSettings(true).catch((error) => toast(error.message));
   $("resetStateBtn").onclick = openResetConfirm;
   if ($("runDiagnosticsBtn")) $("runDiagnosticsBtn").onclick = runDiagnostics;

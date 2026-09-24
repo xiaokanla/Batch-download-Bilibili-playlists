@@ -280,6 +280,38 @@
           </div>
         </section>
 
+        <section class="panel cache-panel" data-collapse-key="cache" data-collapsed-default="true">
+          <div class="panel-head">
+            <div>
+              <div class="eyebrow">缓存管理</div>
+              <div id="cacheSummary" class="muted">查看数据库、标签和 Eagle 缓存位置</div>
+            </div>
+            <button id="refreshCacheBtn" class="btn ghost" type="button">查看</button>
+          </div>
+          <div id="cacheLocationList" class="cache-location-list">
+            <div class="muted">点击“查看”读取当前缓存位置和占用。</div>
+          </div>
+          <div class="cache-migration-box">
+            <div class="field-label">迁移类型</div>
+            <select id="cacheMigrationKind" class="select" data-select-label="缓存迁移类型">
+              <option value="data">程序数据与登录缓存</option>
+              <option value="eagle">Eagle 封面与弹幕缓存</option>
+            </select>
+            <div class="field-label">新缓存位置（请选空文件夹）</div>
+            <div class="path-row">
+              <input id="cacheMigrationTarget" class="input" placeholder="选择一个空文件夹" />
+              <button id="pickCacheTargetBtn" class="btn ghost" type="button">选择</button>
+            </div>
+            <label class="toggle"><input id="cacheRemoveSource" type="checkbox" /> 校验成功后清理旧缓存</label>
+            <div class="section-note compact-note">默认保留旧目录作为备份；下载好的视频不会被搬动。</div>
+            <button id="startCacheMigrationBtn" class="btn primary full" type="button">开始迁移</button>
+            <div class="cache-migration-status">
+              <div class="progress"><span id="cacheMigrationProgress"></span></div>
+              <div id="cacheMigrationStatus" class="muted">Idle</div>
+            </div>
+          </div>
+        </section>
+
         <section class="panel download-panel" data-collapse-key="download" data-collapsed-default="false">
           <div class="eyebrow">第 3 步 · 下载选中的视频</div>
           <div class="section-note">在中间列表勾选视频后，回到这里选择保存位置并开始下载。</div>
@@ -360,7 +392,7 @@
         <details class="panel settings-panel advanced-tools" data-collapse-key="settings">
           <summary>高级设置与路径</summary>
           <div class="settings-body">
-            <div class="field-label">程序数据目录（改动后重启生效）</div>
+            <div class="field-label">程序数据目录（搬动旧数据请用缓存迁移）</div>
             <div class="path-row"><input id="settingDataDir" class="input" /><button id="pickDataDir" class="btn ghost">选择</button></div>
             <div class="field-label">默认下载目录</div>
             <div class="path-row"><input id="settingDownloadDir" class="input" placeholder="未设置时每次下载前选择" /><button id="pickDownloadDir" class="btn ghost">选择</button></div>

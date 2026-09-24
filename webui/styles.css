@@ -1912,6 +1912,125 @@ h3 {
   gap: 8px;
 }
 
+.cache-panel {
+  border-color: rgba(99, 209, 138, 0.16);
+}
+
+.cache-location-list {
+  display: grid;
+  gap: 1px;
+  max-height: 360px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(8, 12, 19, 0.2);
+}
+
+.cache-location-list > .muted {
+  padding: 12px;
+}
+
+.cache-location-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  padding: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.cache-location-item:last-child {
+  border-bottom: 0;
+}
+
+.cache-location-item.migratable {
+  background: rgba(99, 209, 138, 0.045);
+}
+
+.cache-location-copy {
+  min-width: 0;
+}
+
+.cache-location-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cache-location-title strong {
+  min-width: 0;
+  font-size: 13px;
+}
+
+.cache-location-title em {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  border-radius: 999px;
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+  font-size: 10px;
+  font-style: normal;
+}
+
+.cache-location-path {
+  margin-top: 4px;
+  overflow: hidden;
+  color: var(--text);
+  font-family: Consolas, "Microsoft YaHei UI", monospace;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cache-location-meta {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.cache-open-btn {
+  width: 32px;
+  height: 32px;
+  font-size: 15px;
+}
+
+.cache-migration-box {
+  margin-top: 12px;
+  padding-top: 2px;
+  border-top: 1px solid var(--line);
+}
+
+.cache-migration-box .select {
+  width: 100%;
+}
+
+.cache-migration-status {
+  margin-top: 10px;
+}
+
+.cache-migration-status .progress {
+  margin-bottom: 7px;
+}
+
+#cacheMigrationProgress {
+  background: linear-gradient(90deg, var(--success), var(--primary2));
+}
+
+.modal-path {
+  margin: 12px 0;
+  padding: 10px 12px;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  background: var(--field);
+  font-family: Consolas, "Microsoft YaHei UI", monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .diagnostic-item {
   display: grid;
   grid-template-columns: 10px minmax(0, 1fr);
@@ -3293,10 +3412,19 @@ h3 {
 
 :root[data-theme="light"] .eagle-box,
 :root[data-theme="light"] .diagnostics-panel,
+:root[data-theme="light"] .cache-panel,
 :root[data-theme="light"] .eagle-status {
   background:
     linear-gradient(180deg, rgba(43, 150, 207, 0.07), transparent 45%),
     rgba(247, 249, 253, 0.8);
+}
+
+:root[data-theme="light"] .cache-location-list {
+  background: rgba(247, 249, 253, 0.86);
+}
+
+:root[data-theme="light"] .cache-location-item.migratable {
+  background: rgba(36, 138, 82, 0.055);
 }
 
 :root[data-theme="light"] .eagle-progress-head strong,
